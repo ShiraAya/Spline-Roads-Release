@@ -1,0 +1,70 @@
+{
+  "variants": {
+    "fill=none": {
+      "model": "splineroads:block/road_collision"
+    },
+    "fill=grass_block": {
+      "model": "minecraft:block/grass_block"
+    },
+    "fill=dirt": {
+      "model": "minecraft:block/dirt"
+    },
+    "fill=stone": {
+      "model": "minecraft:block/stone"
+    },
+    "fill=sand": {
+      "model": "minecraft:block/sand"
+    },
+    "fill=gravel": {
+      "model": "minecraft:block/gravel"
+    },
+    "fill=deepslate": {
+      "model": "minecraft:block/deepslate"
+    },
+    "fill=coarse_dirt": {
+      "model": "minecraft:block/coarse_dirt"
+    },
+    "fill=podzol": {
+      "model": "minecraft:block/podzol"
+    },
+    "fill=andesite": {
+      "model": "minecraft:block/andesite"
+    },
+    "fill=diorite": {
+      "model": "minecraft:block/diorite"
+    },
+    "fill=granite": {
+      "model": "minecraft:block/granite"
+    },
+    "fill=stone_slab": {
+      "model": "minecraft:block/stone_slab"
+    },
+    "fill=smooth_stone_slab": {
+      "model": "minecraft:block/smooth_stone_slab"
+    },
+    "fill=stone_brick_slab": {
+      "model": "minecraft:block/stone_brick_slab"
+    },
+    "fill=cobblestone_slab": {
+      "model": "minecraft:block/cobblestone_slab"
+    },
+    "fill=brick_slab": {
+      "model": "minecraft:block/brick_slab"
+    },
+    "fill=quartz_slab": {
+      "model": "minecraft:block/quartz_slab"
+    },
+    "fill=oak_slab": {
+      "model": "minecraft:block/oak_slab"
+    },
+    "fill=spruce_slab": {
+      "model": "minecraft:block/spruce_slab"
+    },
+    "fill=stone_bricks": {
+      "model": "minecraft:block/stone_bricks"
+    },
+    "fill=bricks": {
+      "model": "minecraft:block/bricks"
+    }
+  }
+}

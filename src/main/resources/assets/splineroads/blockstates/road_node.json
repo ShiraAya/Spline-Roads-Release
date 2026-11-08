@@ -1,0 +1,7 @@
+{
+  "variants": {
+    "": {
+      "model": "splineroads:block/road_node"
+    }
+  }
+}

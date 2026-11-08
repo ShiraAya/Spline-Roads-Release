@@ -1,0 +1,13 @@
+{
+  "variants": {
+    "type=bottom": {
+      "model": "splineroads:block/road_slab"
+    },
+    "type=top": {
+      "model": "splineroads:block/road_slab_top"
+    },
+    "type=double": {
+      "model": "splineroads:block/road_block"
+    }
+  }
+}

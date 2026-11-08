@@ -1,0 +1,58 @@
+plugins {
+    id 'java'
+    id 'idea'
+    id 'net.minecraftforge.gradle' version '6.0.54'
+}
+
+group = 'com.sora.splineroads'
+version = '2.0'
+base { archivesName = 'splineroads' }
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
+
+minecraft {
+    mappings channel: 'official', version: '1.20.1'
+    copyIdeResources = true
+    runs {
+        configureEach {
+            workingDirectory project.file(project.findProperty('roadRunDir') ?: 'run')
+            property 'forge.logging.console.level', 'info'
+            if (project.hasProperty('roadMtr')) {
+                property 'mixin.env.remapRefMap', 'true'
+                property 'mixin.env.refMapRemappingFile', project.layout.buildDirectory.file('createSrgToMcp/output.srg').get().asFile.absolutePath
+            }
+            mods { splineroads { source sourceSets.main } }
+        }
+        client {}
+        server { args '--nogui' }
+    }
+}
+
+repositories {
+    if (project.hasProperty('roadMtrRepository')) maven {
+        url = uri(project.property('roadMtrRepository'))
+        content { includeModule 'maven.modrinth', 'minecraft-transit-railway' }
+    }
+    // Optional isolated mirror of the same pinned official artifacts, for reproducible offline tests.
+
+    maven { url = 'https://api.modrinth.com/maven'; content { includeGroup 'maven.modrinth' } }
+    if (project.hasProperty('roadEmbeddiumDir')) flatDir { dirs project.property('roadEmbeddiumDir') }
+    if (project.hasProperty('roadOculusDir')) flatDir { dirs project.property('roadOculusDir') }
+}
+dependencies {
+    minecraft 'net.minecraftforge:forge:1.20.1-47.4.20'
+    // Optional MTR 4.0.5 adapter; never bundle the mod or link it on the absent path.
+    if (project.hasProperty('roadMtrJar')) compileOnly files(project.property('roadMtrJar'))
+    else compileOnly 'maven.modrinth:minecraft-transit-railway:R05lh1Ys'
+    if (project.hasProperty('roadMtr')) runtimeOnly fg.deobf('maven.modrinth:minecraft-transit-railway:R05lh1Ys')
+    if (project.hasProperty('roadEmbeddiumDir')) runtimeOnly fg.deobf('org.embeddedt:embeddium:0.3.31+mc1.20.1')
+    if (project.hasProperty('roadOculusDir')) runtimeOnly fg.deobf('net.coderbot:oculus:1.8.0')
+}
+
+tasks.named('jar', Jar) {
+    from('THIRD_PARTY_NOTICES.md') { into 'META-INF' }
+    from('THIRD_PARTY_LICENSES') { into 'META-INF/licenses' }
+    manifest { attributes 'Implementation-Version': project.version }
+    finalizedBy 'reobfJar'
+}

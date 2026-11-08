@@ -1,0 +1,11 @@
+.gradle/
+build/
+run/
+run-*/
+run[0-9]*/
+logs/
+work/
+delivery/
+.idea/
+*.iml
+*.class

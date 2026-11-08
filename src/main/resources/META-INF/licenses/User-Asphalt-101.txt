@@ -1,0 +1,16 @@
+Current SR asphalt — user-original artwork
+
+The user confirmed on 2026-11-02 that this asphalt artwork is original.
+It is included at the user's direction in SR and its release/source packages.
+This statement records authorship and the requested SR distribution; it does not
+assign a new third-party license or transfer copyright.
+
+Current format: RGB PNG, 256 x 256; all three runtime copies are identical.
+Current SHA-256: bc39612a715dfe4e2b7648d3c256dab665dccb7b35dd8f99bd057464ae7bd3b7
+Runtime paths under assets/splineroads:
+ textures/road/asphalt.png
+ textures/block/terrain_asphalt.png
+ textures/block/roundabout_asphalt.png
+Original supplied JPEG SHA-256 (historical record):
+ 432f980214fb3e3d2c2a51af926184ff5a1372a7de26fec2f5a4013f2d14d804
+The current PNGs are preserved unchanged and included in the source archive.
