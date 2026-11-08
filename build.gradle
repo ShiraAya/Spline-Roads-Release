@@ -51,6 +51,7 @@ dependencies {
 }
 
 tasks.named('jar', Jar) {
+    from('LICENSE') { into 'META-INF'; rename { 'LICENSE.txt' } }
     from('THIRD_PARTY_NOTICES.md') { into 'META-INF' }
     from('THIRD_PARTY_LICENSES') { into 'META-INF/licenses' }
     manifest { attributes 'Implementation-Version': project.version }

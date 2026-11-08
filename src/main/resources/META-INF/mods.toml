@@ -1,11 +1,11 @@
 modLoader="javafml"
 loaderVersion="[47,)"
-license="MIT code; Kenney CC0-1.0; user-original asphalt (see META-INF/licenses)"
+license="Spline Roads Non-Commercial License (META-INF/LICENSE.txt); third-party notices in META-INF/licenses"
 [[mods]]
 modId="splineroads"
 version="2.0"
 displayName="Spline Roads"
-authors="Sora, with AI-assisted implementation"
+authors="ShiraAya, with AI-assisted implementation"
 description='''Independent endpoint-based solid spline roads. Generated with AI assistance.'''
 [[dependencies.splineroads]]
 modId="forge"
