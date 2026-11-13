@@ -107,7 +107,7 @@ public final class ParallelSpui {
     all.put(id,extend(road,before,after));
     if(road.fragment()!=null){var f=road.fragment();double shift=Math.max(0,before-f.origin()),total=Math.max(f.total()+shift,f.origin()+shift+mesh.length()+after);
       for(var other:new ArrayList<>(all.values()))if(!other.id().equals(id)&&other.fragment()!=null&&other.fragment().source().equals(f.source())){
-        var g=other.fragment();all.put(other.id(),other.fragment(new RoadSlicing.Fragment(g.source(),g.origin()+shift,total,g.connection(),g.applied(),g.geometry(),g.supports())));}}
+        var g=other.fragment();all.put(other.id(),other.fragment(new RoadSlicing.Fragment(g.source(),g.origin()+shift,total,g.connection(),g.applied(),g.geometry(),g.supports(),g.curveAnchors())));}}
   }
   private static RoadRecord extend(RoadRecord road,double before,double after){
     var mesh=road.rawMesh();var samples=new ArrayList<Sample>();var a=mesh.first();var b=mesh.last();
@@ -132,7 +132,7 @@ public final class ParallelSpui {
     }
     var shape=RoadRibbon.mesh(samples,settings);var start=before>0?RoadRibbon.start(shape):road.start();var end=after>0?RoadRibbon.end(shape):road.end();
     var fragment=road.fragment();if(fragment!=null){double shift=Math.max(0,before-fragment.origin());var patches=fragment.geometry().patches().stream().map(p->new RoadSlicing.Patch(p.from()+before,p.to()+before,p.strips())).toList();
-      fragment=new RoadSlicing.Fragment(fragment.source(),fragment.origin()+shift-before,Math.max(fragment.total()+shift,fragment.origin()+shift+mesh.length()+after),fragment.connection(),fragment.applied(),new RoadSlicing.Geometry(patches),fragment.supports());}
+      fragment=new RoadSlicing.Fragment(fragment.source(),fragment.origin()+shift-before,Math.max(fragment.total()+shift,fragment.origin()+shift+mesh.length()+after),fragment.connection(),fragment.applied(),new RoadSlicing.Geometry(patches),fragment.supports(),fragment.curveAnchors());}
     return new RoadRecord(road.id(),road.owner(),before>0?RampJunctions.at(start.position()):road.a(),after>0?RampJunctions.at(end.position()):road.b(),start,end,settings,road.automatic(),road.clearance(),List.of(),road.endCaps(),road.buildVersion(),road.assembly(),shape.samples(),road.furniturePhase(),road.junction(),road.toll(),fragment);
   }
   private static List<RoadStreetscape.Span> grow(List<RoadStreetscape.Span> spans,double length,double before,double after){
@@ -290,7 +290,7 @@ public final class ParallelSpui {
         if(first)before=source.position().distance(target.position());else after=source.position().distance(target.position());
       }
       if(data.streets.containsKey(host.id())){var full=data.streets.get(host.id());if(before>0||after>0)full=extend(full,before,after);
-        if(full.fragment()!=null&&host.fragment()!=null){var f=full.fragment();var live=host.fragment();double trim=RoadQueries.horizontal(full.rawMesh(),host.rawMesh().first().center()).sample().distance();full=full.fragment(new RoadSlicing.Fragment(f.source(),Math.max(0,live.origin()-trim),live.total(),f.connection(),f.applied(),f.geometry(),f.supports()));}logical.put(host.id(),full);}
+        if(full.fragment()!=null&&host.fragment()!=null){var f=full.fragment();var live=host.fragment();double trim=RoadQueries.horizontal(full.rawMesh(),host.rawMesh().first().center()).sample().distance();full=full.fragment(new RoadSlicing.Fragment(f.source(),Math.max(0,live.origin()-trim),live.total(),f.connection(),f.applied(),f.geometry(),f.supports(),f.curveAnchors()));}logical.put(host.id(),full);}
     }
     data.replaceAssembly(level,player,built,removed,selected,moves);
     for(var entry:logical.entrySet())data.streets.put(entry.getKey(),entry.getValue().withLanePoints(LaneTopology.metadata(data.index.roads.get(entry.getKey()).record)));

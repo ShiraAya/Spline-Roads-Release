@@ -372,7 +372,7 @@ public record RoadRecord(
     t.putBoolean("Curb", o.curb());
     CompoundTag walk=new CompoundTag();walk.putBoolean("Enabled",o.sidewalk().enabled());walk.putString("Side",o.sidewalk().side().name());walk.putInt("Width",o.sidewalk().width());walk.putString("Material",o.sidewalk().material());walk.putBoolean("Smooth",o.sidewalk().smooth());walk.putBoolean("Tactile",o.sidewalk().tactile());t.put("Sidewalk",walk);
     var infra=o.infrastructure();CompoundTag facilities=new CompoundTag();
-    facilities.putString("Bridge",infra.bridge().name());facilities.putDouble("Span",infra.span());facilities.putString("Tunnel",infra.tunnel().name());facilities.putDouble("Headroom",infra.headroom());facilities.putString("Gantry",infra.gantry().name());facilities.putDouble("Spacing",infra.spacing());facilities.putDouble("TunnelDepth",infra.tunnelDepth());facilities.putString("TunnelAdjustment",infra.adjustment().name());facilities.putInt("DipProfile",infra.efficientDip()?1:0);facilities.putDouble("BridgeRise",infra.bridgeRise());facilities.putDouble("MaxGrade",infra.maxGrade());facilities.putBoolean("AutoSpan",infra.autoSpan());facilities.putBoolean("FixedStations",infra.fixedStations());facilities.putString("MedianConversion",infra.medianConversion().name());
+    facilities.putString("Bridge",infra.bridge().name());facilities.putDouble("Span",infra.span());facilities.putString("Tunnel",infra.tunnel().name());facilities.putDouble("Headroom",infra.headroom());facilities.putString("Gantry",infra.gantry().name());facilities.putDouble("Spacing",infra.spacing());facilities.putDouble("TunnelDepth",infra.tunnelDepth());facilities.putString("TunnelAdjustment",infra.adjustment().name());facilities.putInt("DipProfile",infra.efficientDip()?1:0);facilities.putDouble("BridgeRise",infra.bridgeRise());facilities.putDouble("MaxGrade",infra.maxGrade());facilities.putBoolean("AutoSpan",infra.autoSpan());facilities.putBoolean("SupportsEnabled",infra.supportsEnabled());facilities.putBoolean("FixedStations",infra.fixedStations());facilities.putString("MedianConversion",infra.medianConversion().name());
     ListTag edits=new ListTag();for(var edit:infra.gantryEdits()){
       CompoundTag e=new CompoundTag();e.putInt("Slot",edit.slot());e.putDouble("Offset",edit.offset());e.putDouble("Clearance",edit.clearance());e.putString("Kind",edit.kind().name());e.putBoolean("Reverse",edit.reverse());e.putBoolean("Independent",edit.independent());e.putDouble("Position",edit.position());e.putBoolean("Anchored",edit.anchored());e.putBoolean("Automatic",edit.automatic());edits.add(e);
     }facilities.put("GantryEdits",edits);t.put("Infrastructure",facilities);
@@ -477,7 +477,7 @@ public record RoadRecord(
     if(t.contains("Sidewalk")) {
       var walk=t.getCompound("Sidewalk");s=s.options(s.options().sidewalk(new com.sora.splineroads.core.RoadSidewalks.Config(walk.getBoolean("Enabled"),com.sora.splineroads.core.RoadSidewalks.Side.valueOf(walk.getString("Side")),walk.getInt("Width"),walk.getString("Material"),walk.getBoolean("Smooth"),!walk.contains("Tactile")||walk.getBoolean("Tactile"))));
     }
-    if(t.contains("Infrastructure")){var i=t.getCompound("Infrastructure");s=s.options(s.options().infrastructure(new com.sora.splineroads.core.RoadInfrastructure.Config(com.sora.splineroads.core.RoadInfrastructure.Bridge.valueOf(i.getString("Bridge")),i.getDouble("Span"),com.sora.splineroads.core.RoadInfrastructure.Tunnel.valueOf(i.getString("Tunnel")),i.getDouble("Headroom"),com.sora.splineroads.core.RoadInfrastructure.Gantry.valueOf(i.getString("Gantry")),i.getDouble("Spacing"),i.getDouble("TunnelDepth"),i.getList("GantryEdits",Tag.TAG_COMPOUND).stream().map(tag->{var e=(CompoundTag)tag;return new com.sora.splineroads.core.RoadGantry.Edit(e.getInt("Slot"),e.getDouble("Offset"),e.getDouble("Clearance"),com.sora.splineroads.core.RoadInfrastructure.Gantry.valueOf(e.getString("Kind")),e.getBoolean("Reverse"),e.getBoolean("Independent"),e.getDouble("Position"),e.getBoolean("Anchored"),e.getBoolean("Automatic"));}).toList(),i.contains("TunnelAdjustment")?com.sora.splineroads.core.RoadTunnelFit.Adjustment.valueOf(i.getString("TunnelAdjustment")):com.sora.splineroads.core.RoadTunnelFit.Adjustment.OFF,i.getInt("DipProfile")>=1,i.getDouble("BridgeRise"),i.getDouble("MaxGrade"),i.getBoolean("AutoSpan"),i.getBoolean("FixedStations"),i.contains("MedianConversion")?com.sora.splineroads.core.RoadInfrastructure.MedianConversion.valueOf(i.getString("MedianConversion")):com.sora.splineroads.core.RoadInfrastructure.MedianConversion.BOTH)));}
+    if(t.contains("Infrastructure")){var i=t.getCompound("Infrastructure");s=s.options(s.options().infrastructure(new com.sora.splineroads.core.RoadInfrastructure.Config(com.sora.splineroads.core.RoadInfrastructure.Bridge.valueOf(i.getString("Bridge")),i.getDouble("Span"),com.sora.splineroads.core.RoadInfrastructure.Tunnel.valueOf(i.getString("Tunnel")),i.getDouble("Headroom"),com.sora.splineroads.core.RoadInfrastructure.Gantry.valueOf(i.getString("Gantry")),i.getDouble("Spacing"),i.getDouble("TunnelDepth"),i.getList("GantryEdits",Tag.TAG_COMPOUND).stream().map(tag->{var e=(CompoundTag)tag;return new com.sora.splineroads.core.RoadGantry.Edit(e.getInt("Slot"),e.getDouble("Offset"),e.getDouble("Clearance"),com.sora.splineroads.core.RoadInfrastructure.Gantry.valueOf(e.getString("Kind")),e.getBoolean("Reverse"),e.getBoolean("Independent"),e.getDouble("Position"),e.getBoolean("Anchored"),e.getBoolean("Automatic"));}).toList(),i.contains("TunnelAdjustment")?com.sora.splineroads.core.RoadTunnelFit.Adjustment.valueOf(i.getString("TunnelAdjustment")):com.sora.splineroads.core.RoadTunnelFit.Adjustment.OFF,i.getInt("DipProfile")>=1,i.getDouble("BridgeRise"),i.getDouble("MaxGrade"),i.getBoolean("AutoSpan"),i.getBoolean("FixedStations"),i.contains("MedianConversion")?com.sora.splineroads.core.RoadInfrastructure.MedianConversion.valueOf(i.getString("MedianConversion")):com.sora.splineroads.core.RoadInfrastructure.MedianConversion.BOTH,!i.contains("SupportsEnabled")||i.getBoolean("SupportsEnabled"))));}
     else s=s.options(s.options().infrastructure(s.options().infrastructure().grade(0).autoSpan(false)));
     var lines=new ArrayList<com.sora.splineroads.core.RoadLaneLines.Edit>();for(Tag tag:t.getList("LaneLines",Tag.TAG_COMPOUND)){var e=(CompoundTag)tag;lines.add(new com.sora.splineroads.core.RoadLaneLines.Edit(e.getString("Key"),com.sora.splineroads.core.RoadLaneLines.Pattern.valueOf(e.getString("Pattern")),e.getDouble("Width")));}s=s.options(s.options().laneLines(lines).hideArrows(t.getBoolean("HideArrows")).attachments(AttachedPointCodec.read(t.getCompound("AttachedRoadPoints"))).lanePoints(LanePointCodec.read(t.getCompound("LanePointsV2"))));
     if(t.contains("DirectionalLanes")){var lanes=t.getCompound("DirectionalLanes");s=s.options(s.options().lanes(new com.sora.splineroads.core.RoadLanes.Counts(lanes.getInt("Forward"),lanes.getInt("Reverse"))));}
@@ -599,7 +599,17 @@ public record RoadRecord(
    * Re-fitting can fail curvature checks even though the saved subpath is valid.
    * The same route/profile checks as retainAlignment decide whether reuse is legal;
    * width changes still validate the resulting sampled ribbon. */
+  /** Interpret legacy split handles only for an explicit editor operation; never rewrite the world on load. */
+  public RoadRecord localCurveForEditing(){
+    if(fragment==null||!fragment.curveAnchors().isEmpty()||settings.mode()!=Mode.CURVE&&settings.options().routing().controls().isEmpty()||alignment.isEmpty())return this;
+    return RoadSplitGeometry.range(this,0,mesh().length(),id,a,b,start,end,fragment.connection());
+  }
+  private Settings localizedRequest(Settings request,RoadRecord localized){
+    return request.options().routing().equals(settings.options().routing())
+        ?request.options(request.options().route(localized.settings().options().routing())):request;
+  }
   public RoadPlanner.Plan retainedPlan(Settings request,RoadPlanner.Hint a,RoadPlanner.Hint b,Node authoredStart,Node authoredEnd){
+    var localized=localCurveForEditing();if(localized!=this)return localized.retainedPlan(localizedRequest(request,localized),a,b,authoredStart,authoredEnd);
     if(fragment==null||alignment.isEmpty()||!sameNode(start,authoredStart)||!sameNode(end,authoredEnd))return null;
     boolean auto=automatic&&request.mode()==Mode.AUTO;
     var wanted=auto?RoadPlanner.mode(request,settings.mode(),request.arcDegrees()):request;
@@ -647,11 +657,12 @@ public record RoadRecord(
         &&(b||com.sora.splineroads.core.RoadMedianAnchor.position(saved,false).distance(proposal.end().position())<1e-7);
   }
   public RoadRecord retainAlignment(RoadRecord proposal){
+    var localized=localCurveForEditing();if(localized!=this)return localized.retainAlignment(proposal.settings(localizedRequest(proposal.settings(),localized)));
     var s=proposal.settings();var a=settings.options();var b=s.options();
     if(alignment.isEmpty()||!sameNode(start,proposal.start())||!sameNode(end,proposal.end())
         ||settings.mode()!=s.mode()||settings.tension()!=s.tension()||settings.arcDegrees()!=s.arcDegrees()
         ||settings.rampTurn()!=s.rampTurn()||settings.structure()!=s.structure()
-        ||!a.routing().equals(b.routing())||!a.ports().equals(b.ports())
+        ||!a.routing().equals(b.routing())&&!com.sora.splineroads.core.RoadSlicing.localCurve(fragment,a.routing(),b.routing())||!a.ports().equals(b.ports())
         ||a.liftPosition()!=b.liftPosition()||a.liftHeight()!=b.liftHeight()
         ||a.infrastructure().tunnelDepth()!=b.infrastructure().tunnelDepth()
         ||a.infrastructure().bridgeRise()!=b.infrastructure().bridgeRise()
@@ -676,6 +687,7 @@ public record RoadRecord(
     if(slots!=value.options().lanePoints())return settings(value.options(value.options().lanePoints(slots)));
     if(settings.equals(value))return this;
     List<Sample> adjusted = alignment;var retainedFragment=fragment;
+    if(fragment!=null&&!settings.options().routing().controls().equals(value.options().routing().controls()))retainedFragment=fragment.geometry(new com.sora.splineroads.core.RoadSlicing.Geometry(List.of()));
     if (!alignment.isEmpty() && widthChanged(settings,value)) {
       if(fragment!=null)retainedFragment=fragment.geometry(new com.sora.splineroads.core.RoadSlicing.Geometry(List.of()));
       double length = alignment.get(alignment.size() - 1).distance();
@@ -768,7 +780,7 @@ public record RoadRecord(
   public static String meshCacheStats(){return "raw="+RAW_MESHES.stats()+", shaped="+SHAPED_MESHES.stats();}
   public boolean legacyRailway(){return railway()&&!settings.options().railbed().active();}
   public boolean railway(){return settings.style()==Style.RAILBED;}
-  public RoadGeometry.Mesh mesh() {if(railway())return rawMesh();return SHAPED_MESHES.get(this,r->{var mesh=com.sora.splineroads.core.RoadsideBypass.sampled(com.sora.splineroads.core.LaneSections.apply(r.rawMesh()));return com.sora.splineroads.core.RailwayCrossings.shape(r.fragment==null||!r.fragment.applied().points().equals(r.settings.options().attachments().points())?mesh:com.sora.splineroads.core.RoadSlicing.attach(mesh,r.fragment.geometry()));});}
+  public RoadGeometry.Mesh mesh() {if(railway())return rawMesh();return SHAPED_MESHES.get(this,r->{var mesh=com.sora.splineroads.core.RoadsideBypass.sampled(com.sora.splineroads.core.LaneSections.apply(r.rawMesh()));return com.sora.splineroads.core.RailwayCrossings.shape(r.fragment==null||!r.fragment.applied().points().equals(r.settings.options().attachments().points())||!r.fragment.curveAnchors().isEmpty()&&!r.fragment.curveAnchors().equals(r.settings.options().routing().controls())?mesh:com.sora.splineroads.core.RoadSlicing.attach(mesh,r.fragment.geometry()));});}
   public RoadGeometry.Mesh rawMesh() {return RAW_MESHES.get(this,RoadRecord::buildRawMesh);}
   private RoadGeometry.Mesh buildRawMesh() {
     if(toll!=null)return tollPlan().mesh();

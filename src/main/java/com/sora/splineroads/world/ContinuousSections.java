@@ -7,7 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 import net.minecraft.nbt.*;
 
-/** Keep only the occupied interval; generated continuations are retired on explicit rebuild. */
+/** Split exact occupied intervals and preserve both ordinary outside continuations. */
 final class ContinuousSections {
   static UUID sourceId(String name){
     String value=name.startsWith(ContinuousRoads.MAIN)?name.substring(ContinuousRoads.MAIN.length()):name.startsWith(ContinuousRoads.DONOR)?name.substring(ContinuousRoads.DONOR.length()):null;
@@ -32,8 +32,8 @@ final class ContinuousSections {
     // A moved endpoint already carries its adjacent donor; avoid splitting a sub-block remnant.
     if(moved||first<2&&length-last<2){out.add(new Leg(ContinuousRoads.MAIN+original.id(),leg.from(),leg.to(),generated));return;}
     if(first<2)first=0;if(length-last<2)last=length;
-    // Only the occupied mainline exists in the new assembly. Do not manufacture
-    // ordinary continuation roads beyond the planned terminal anchors.
+    if(first>1e-6)out.add(new Leg(ContinuousRoads.DONOR+original.id()+"@0.0,"+first,leg.from(),leg.to(),RoadSlicing.slice(original.mesh(),0,first,original.settings()).mesh()));
+    if(last<length-1e-6)out.add(new Leg(ContinuousRoads.DONOR+original.id()+"@"+last+","+length,leg.from(),leg.to(),RoadSlicing.slice(original.mesh(),last,length,original.settings()).mesh()));
     String name=ContinuousRoads.MAIN+original.id()+"@"+first+","+last;
     Node a=RoadSplitGeometry.node(original.mesh(),first),b=RoadSplitGeometry.node(original.mesh(),last);
     RoadRecord slice=RoadSplitGeometry.range(original,first,last,id(name),first==0?original.a():InterchangeJunctions.pos(a.position()),last==length?original.b():InterchangeJunctions.pos(b.position()),a,b,RoadSlicing.Connection.CONTINUOUS);
@@ -48,10 +48,19 @@ final class ContinuousSections {
   static void updateSources(CompoundTag tag,Plan plan){
     var list=new ListTag();
     for(var source:ContinuousRoads.sources(tag)){
-      if(detached(tag,source.road().id()))continue;
-      var legs=plan.legs().stream().filter(l->source.road().id().equals(sourceId(l.name()))&&l.name().contains("@")).toList();
+      var previous=tag.getList("ContinuousSources",Tag.TAG_COMPOUND).stream().map(t->(CompoundTag)t).filter(t->t.getCompound("Road").getUUID("Id").equals(source.road().id())).findFirst().orElseThrow();
+      var allLegs=plan.legs().stream().filter(l->source.road().id().equals(sourceId(l.name()))).toList();
+      var legs=allLegs.stream().filter(l->l.name().contains("@")).toList();
       if(legs.isEmpty()){
-        var previous=tag.getList("ContinuousSources",Tag.TAG_COMPOUND).stream().map(t->(CompoundTag)t).filter(t->t.getCompound("Road").getUUID("Id").equals(source.road().id())).findFirst().orElseThrow();list.add(previous.copy());continue;
+        var retained=previous.copy();
+        // Captured neighbours outside this plan remain ordinary roads. Their
+        // recorded state is a boundary, not permission to refresh later edits.
+        if(allLegs.isEmpty()&&!retained.getBoolean("Detached")&&!retained.getBoolean(ContinuousService.LOGICAL)){
+          retained.putBoolean("Detached",true);retained.putBoolean("DetachedExact",true);
+        }
+        if(!allLegs.isEmpty()){retained.putBoolean("Detached",allLegs.stream().allMatch(l->ContinuousRoads.donor(l.name())));retained.remove(ContinuousService.LOGICAL);}
+        if(!retained.getBoolean("Detached"))retained.remove("DetachedExact");
+        list.add(retained);continue;
       }
       for(var leg:legs){var item=new CompoundTag();item.putInt("Axis",source.axis());item.put("Road",source(tag,leg.name()).header());item.putBoolean("Detached",ContinuousRoads.donor(leg.name()));list.add(item);}
     }

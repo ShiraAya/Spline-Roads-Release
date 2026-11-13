@@ -70,9 +70,10 @@ public final class MultiInterchange {
     // fitting. Earlier axes win the lift tie: AB above CD above EF.
     double[] original=levels.clone();Integer[] order={0,1,2};
     Arrays.sort(order,Comparator.<Integer>comparingDouble(i->original[i]).thenComparing(Comparator.reverseOrder()));
-    levels[order[0]]=Math.max(base,original[order[0]]-drop);
+    levels[order[0]]=original[order[0]];
     for(int i=1;i<3;i++)levels[order[i]]=Math.max(original[order[i]]-drop,levels[order[i-1]]+gap);
     if(options.adjustEndpoints())for(int i=0;i<n;i++) {
+      if(i/2==order[0]){anchors[i]=nodes[i];continue;}
       double rise=levels[i/2]-original[i/2];V p=nodes[i].position();
       anchors[i]=new Node(new V(p.x(),p.y()+rise,p.z()),nodes[i].yaw(),nodes[i].grade());
     }
@@ -107,7 +108,15 @@ public final class MultiInterchange {
       catch(IllegalArgumentException e){failed=middle;}
     }
     if(initial!=null&&extent(best)>=extent(initial)-.5)return initial;
-    return best;
+    // Every side is restored/refined on its own while all movements are revalidated.
+    for(int index=0;index<nodes.length;index++){
+      double low=nodes[index].position().sub(center).horizontalLength(),high=best.anchors().get(index).position().sub(center).horizontalLength();if(high<=low+1e-6)continue;
+      Node[] candidate=best.anchors().toArray(Node[]::new);var current=candidate[index];V p=nodes[index].position();candidate[index]=new Node(new V(p.x(),current.position().y(),p.z()),current.yaw(),current.grade());
+      try{best=new MultiInterchange(candidate,settings,options,baseHeight).build();continue;}catch(IllegalArgumentException ignored){}
+      for(int step=0;step<8&&high-low>1;step++){RoadPlanningBudget.check();double mid=(low+high)/2;candidate=best.anchors().toArray(Node[]::new);current=candidate[index];V at=center.add(p.sub(center).horizontalUnit().mul(mid));candidate[index]=new Node(new V(at.x(),current.position().y(),at.z()),current.yaw(),current.grade());
+        try{best=new MultiInterchange(candidate,settings,options,baseHeight).build();high=mid;}catch(IllegalArgumentException ignored){low=mid;}
+      }
+    }return best;
   }
   private static double extent(Plan plan){return plan.anchors().stream().mapToDouble(p->p.position().sub(plan.center()).horizontalLength()).max().orElseThrow();}
   private static Node[] extend(Node[] nodes,V center,double length,boolean shrink){

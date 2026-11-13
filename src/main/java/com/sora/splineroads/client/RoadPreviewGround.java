@@ -35,6 +35,8 @@ public final class RoadPreviewGround implements RoadStructures.Ground {
   private final RoadPierSpacing pierSpacing;
   private final RoadRailJoin railJoin,capMouths;
   private final Map<Mesh,Mesh> motorDecks=new IdentityHashMap<>();
+  private final Set<Mesh> joinedRoads=Collections.newSetFromMap(new IdentityHashMap<>());
+  private final Map<RoadStructures.Part,Mesh> joinedPaving=new IdentityHashMap<>();
   private final Map<BlockPos,List<AABB>> columns=new HashMap<>();
   private final Set<BlockPos> queries=new LinkedHashSet<>();
   private final Map<Long,LevelChunk> chunks=new HashMap<>();
@@ -61,6 +63,11 @@ public final class RoadPreviewGround implements RoadStructures.Ground {
   }
   static RoadPreviewGround create(Level level,Mesh mesh,UUID edited,Collection<RoadIndex.Built> roads,Sources retained,
       List<RoadStructures.Part> fixedSupports,Mesh terrainReference){
+    return create(level,mesh,edited,roads,retained,fixedSupports,terrainReference,null);
+  }
+  static RoadPreviewGround create(Level level,Mesh mesh,UUID edited,Collection<RoadIndex.Built> roads,Sources retained,
+      List<RoadStructures.Part> fixedSupports,Mesh terrainReference,com.sora.splineroads.world.RoadRecord candidate){
+    if(candidate==null&&edited!=null)candidate=roads.stream().filter(r->r.record.id().equals(edited)).map(r->r.record).findFirst().orElse(null);
     var candidates=roads.stream().filter(r->!r.record.id().equals(edited)).toList();
     double margin=3+(mesh.settings().options().sidewalk().enabled()?mesh.settings().options().sidewalk().width():0);
     var nearby=candidates.stream().filter(r->RoadIndex.overlapXZ(r.mesh,mesh,margin)).toList();
@@ -73,12 +80,26 @@ public final class RoadPreviewGround implements RoadStructures.Ground {
         ||mesh.settings().options().lanePoints().cuts().stream().anyMatch(c->c.connection().equals(r.record.id()))).map(r->r.mesh).toList());
     var result=new RoadPreviewGround(level,mesh,nearby.stream().map(r->r.mesh).toList(),
         obstacles.stream().map(r->r.mesh).toList(),obstacles.stream().flatMap(r->r.record.structures().stream()).toList(),join,mouths,retained,fixedSupports,terrainReference);
+    result.joinedRoads.clear();
+    for(var other:obstacles){
+      var r=other.record;
+      boolean connected=candidate!=null?(candidate.a().equals(r.a())||candidate.a().equals(r.b())||candidate.b().equals(r.a())||candidate.b().equals(r.b()))
+          :sharedEndpoint(mesh,other.mesh);
+      if(connected||LaneMerge.linkedTo(mesh,other.mesh)||LaneMerge.linkedTo(other.mesh,mesh)){
+        result.joinedRoads.add(other.mesh);
+        for(var part:r.structures())if(part.material().name().startsWith("WALK_"))result.joinedPaving.put(part,other.mesh);
+      }
+    }
     var tunnels=roads.stream().filter(RoadIndex.Built::hasTunnel).toList();
     result.cover=new RoadTerrainCover(chunk->tunnels.stream().filter(r->r.chunks.contains(chunk)).toList());
     nearby.forEach(r->result.railShells.put(r.mesh,r.record.structures()));
     return result;
   }
 
+  private static boolean sharedEndpoint(Mesh a,Mesh b){
+    return a.first().center().distance(b.first().center())<.01||a.first().center().distance(b.last().center())<.01
+        ||a.last().center().distance(b.first().center())<.01||a.last().center().distance(b.last().center())<.01;
+  }
   private RoadPreviewGround(Level level,Mesh mesh,List<Mesh> nearby,List<Mesh> obstacles,
       List<RoadStructures.Part> structures,RoadRailJoin railJoin,RoadRailJoin capMouths,Sources retained,
       List<RoadStructures.Part> fixedSupports,Mesh terrainReference){
@@ -90,8 +111,9 @@ public final class RoadPreviewGround implements RoadStructures.Ground {
     sidewalkSolids=new RoadPavingSupport(structures);
     gantrySolids=new RoadSolidOverlap.Index(structures.stream().filter(RoadGantry::member).toList());
     pierSpacing=new RoadPierSpacing(structures);
+    for(var other:obstacles)if(sharedEndpoint(mesh,other)||LaneMerge.linkedTo(mesh,other)||LaneMerge.linkedTo(other,mesh))joinedRoads.add(other);
   }
-  @Override public List<RoadStructures.Part> fixedSupports(){return fixedSupports;}
+  @Override public List<RoadStructures.Part> fixedSupports(){return mesh.settings().options().infrastructure().supportsEnabled()?fixedSupports:List.of();}
   @Override public double foundation(V center,double top,double width){
     double median=RoadSupports.medianFoundation(center,top,width,obstacles);
     return sidewalkSolids.foundation(center,top,width,median,()->RoadStructures.Ground.super.foundation(center,top,width));
@@ -293,7 +315,10 @@ public final class RoadPreviewGround implements RoadStructures.Ground {
     if(!RailbedFurniture.visualOnly(part)&&nearby.stream().anyMatch(road->java.util.stream.Stream.concat(part.base().stream(),java.util.stream.Stream.of(part.a().add(part.b()).mul(.5))).anyMatch(p->RailwayCrossings.walkingAt(mesh,road,p,.3))))return true;
     if(pierSpacing.tooClose(part)||part.pier()&&!RoadGantry.member(part)&&gantrySolids.intersects(part))return true;
     if(part.pier()&&part.material()==RoadStructures.Material.CONCRETE&&cycleExcavation.intersects(part))return true;
-    if(!RoadSidewalks.smoothPart(part)&&sidewalkSolids.blocks(part))return true;
+    if(!RoadSidewalks.smoothPart(part)&&sidewalkSolids.blocks(part,paving->{
+      var joining=joinedPaving.get(paving);
+      return joining!=null&&RoadClearance.joiningFloor(part,mesh,joining)&&RoadClearance.belowSurface(part,mesh,.025);
+    }))return true;
     if(lampMount==null?(RoadGantryMounts.foot(part)?RoadGantryMounts.blockedByRoad(part,mesh,4.25)
         :RoadStructureClearance.selfSupportBlocked(part,mesh)):RoadStreetscape.lampOwnRoadBlocked(part,mesh,lampMount))return true;
     if(railJoin==null&&!part.pier()&&part.material()==RoadStructures.Material.DEFAULT)return false;
@@ -311,8 +336,7 @@ public final class RoadPreviewGround implements RoadStructures.Ground {
         if(RoadStructureClearance.pierBlocked(part,other,nearby))return true;
       }else{
         if(LaneClosureLandscape.paved(part)&&RoadClearance.belowSurface(part,other,.025))continue;
-        boolean joining=LaneMerge.linkedTo(mesh,other)||LaneMerge.linkedTo(other,mesh)
-            ||RoadQueries.joins(mesh,other,part.a())||RoadQueries.joins(mesh,other,part.b());
+        boolean joining=joinedRoads.contains(other);
         if(joining&&RoadClearance.joiningFloor(part,mesh,other))continue;
         var protectedMesh=railA==null?other:motorDecks.computeIfAbsent(other,LaneDeck::motorOnly);
         if(RoadClearance.structureInvades(part,protectedMesh,RoadStructureClearance.headroom(other)))return true;

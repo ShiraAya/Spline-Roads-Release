@@ -192,7 +192,7 @@ public final class RoadScreen extends Screen {
                                 (RoadProfile.modern(style)
                                         ? "车道 " + format(laneWidth()) + " · 总宽 "
                                         : "路宽 ")
-                                    + format(roadWidth)
+                                    + displayWidth(roadWidth)
                                     + " 格"),
                             b -> {})
                         .bounds(x + 34, y + 24, 196, 20)
@@ -329,6 +329,10 @@ public final class RoadScreen extends Screen {
     f.setResponder(s -> changed());
     fields.put(key, f);
     addRenderableWidget(f);
+  }
+
+  static String displayWidth(double n) {
+    return java.math.BigDecimal.valueOf(n).setScale(3, java.math.RoundingMode.HALF_UP).stripTrailingZeros().toPlainString();
   }
 
   private String format(double n) {
@@ -504,6 +508,9 @@ public final class RoadScreen extends Screen {
             var plan=com.sora.splineroads.core.JunctionPlanner.plan(spec);meshes.add(plan.pieces().get(2).mesh());
             for(var piece:plan.pieces()){faces.addAll(piece.paint());piece.structures().forEach(p->faces.addAll(p.faces()));}
           }
+          if(payload.getBoolean("MixedMarker"))for(var road:com.sora.splineroads.world.JunctionPointConnections.preview(payload,s)){
+            meshes.add(road.mesh());if(road.junction()!=null)faces.addAll(road.junction().get().paint());road.structures().forEach(p->faces.addAll(p.faces()));
+          }
           ClientRoads.preview=meshes.get(0);ClientRoads.nodePreviews=List.copyOf(meshes);JunctionScreen.previewMesh=ClientRoads.preview;
           RoadRenderer.previewCandidates(List.of());JunctionScreen.previewFaces=List.copyOf(faces);
           status="附属点连接道路 · 总宽 "+format(s.width())+" 格；路口设置使用路口编辑器";
@@ -626,9 +633,9 @@ public final class RoadScreen extends Screen {
         ||payload.getBoolean("ForceJunctionA")||payload.getBoolean("ForceJunctionB")
         ||payload.contains("DraftConflict")||junctionMode())return null;
     var built=ClientRoads.INDEX.roads.get(payload.getUUID("Id"));
-    if(built==null||built.record.junction()!=null||built.record.toll()!=null||built.record.railway()
-        ||!built.record.header().equals(payload.getCompound("Road")))return null;
-    var r=built.record;
+    if(built==null||built.record.junction()!=null||built.record.toll()!=null||built.record.railway())return null;
+    var r=built.record.localCurveForEditing();
+    if(!r.header().equals(payload.getCompound("Road")))return null;
     if(!r.start().equals(RoadRecord.readNode(payload.getCompound("StartNode")))
         ||!r.end().equals(RoadRecord.readNode(payload.getCompound("EndNode"))))return null;
     var expected=RoadProfile.editable(r.settings());
@@ -1004,7 +1011,7 @@ public final class RoadScreen extends Screen {
       }else{
         option("人行道绿化："+c.planting().label+" ▸",x,y,w,()->{var values=com.sora.splineroads.core.RoadStreetscape.Planting.values();options=options.streetscape(options.streetscape().planting(values[(options.streetscape().planting().ordinal()+1)%values.length]));}).active=eligible&&options.sidewalk().enabled()&&structure!=Structure.TUNNEL;
         field("绿化间距 / 8–64 格","plantingSpacing",c.plantingSpacing(),x,y+36);fields.get("plantingSpacing").setWidth(w);
-        option("道路包边："+c.apron().label+" ▸",x,y+72,w,()->{var values=com.sora.splineroads.core.RoadStreetscape.Apron.values();options=options.streetscape(options.streetscape().apron(values[(options.streetscape().apron().ordinal()+1)%values.length]));});
+        option((options.sidewalk().enabled()?"人行道包边："+switch(c.apron()){case ROAD -> "同人行道";case TERRAIN -> "相邻地形";case NONE -> "无";}:"道路包边："+c.apron().label)+" ▸",x,y+72,w,()->{var values=com.sora.splineroads.core.RoadStreetscape.Apron.values();options=options.streetscape(options.streetscape().apron(values[(options.streetscape().apron().ordinal()+1)%values.length]));});
       }
       if(optionsOnly())option("返回道路设置",x+164,top+10,100,()->extraPage=false);return;
     }
@@ -1021,8 +1028,10 @@ public final class RoadScreen extends Screen {
         field(bridge?"手动桥跨 / 格":"边缘净高 / 格",upper,bridge?infra.span():infra.headroom(),x,y+32);fields.get(upper).setWidth(half);
         field(bridge?"抬升高度 / 格":"下潜深度 / 格",lower,bridge?infra.bridgeRise():infra.tunnelDepth(),x,y+66);fields.get(lower).setWidth(half);
         if(bridge){
-          option("配跨："+(infra.autoSpan()?"自动":"手动"),right,y+44,half,()->options=options.infrastructure(options.infrastructure().autoSpan(!infra.autoSpan())))
-              .active=infra.bridge()==RoadInfrastructure.Bridge.CABLE||infra.bridge()==RoadInfrastructure.Bridge.SUSPENSION;
+          option("配跨："+(!infra.supportsEnabled()?"关闭":infra.autoSpan()?"自动":"手动"),right,y+44,half,()->{
+            var c=options.infrastructure();
+            options=options.infrastructure(!c.supportsEnabled()?c.supportsEnabled(true).autoSpan(true):c.autoSpan()?c.autoSpan(false):c.supportsEnabled(false));
+          });
         }else option("下潜："+(infra.tunnelDepth()>0?"开":"关"),right,y+44,half,()->{
           options=options.lift(.5,0).infrastructure(options.infrastructure().depth(infra.tunnelDepth()>0?0:8));structure=Structure.TUNNEL;
         });

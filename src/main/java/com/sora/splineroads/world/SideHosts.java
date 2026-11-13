@@ -66,6 +66,7 @@ final class SideHosts {
     var plan=JunctionPlanner.plan(spec);return original.junction(owner.group(),new JunctionPlanner.Ref(spec,plan.pieces().size()-1,54,cuts));
   }
   static void remove(ServerLevel level,ServerPlayer player,UUID group){
+    if(JunctionPointConnections.saved(RoadData.get(level),group)){JunctionPointConnections.remove(level,player,group);return;}
     var data=RoadData.get(level);var t=data.junctions.get(group);if(t==null)throw new IllegalArgumentException("连接已不存在");
     if(player!=null)RoadData.requireOwner(player,t.getUUID("Owner"));
     var removed=new HashSet<UUID>();var nodes=new HashSet<BlockPos>();var built=new ArrayList<RoadIndex.Built>();

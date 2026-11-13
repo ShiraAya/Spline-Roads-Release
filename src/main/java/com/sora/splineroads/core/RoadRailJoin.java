@@ -172,9 +172,9 @@ public final class RoadRailJoin {
           // welded overlap used by an auxiliary lane used to disappear after both
           // faces were inset .16, leaving a barrier across an otherwise open merge.
           double station=(a.distance()+b.distance())/2;
-          V tangent=theirAuxiliary!=null&&station>=theirAuxiliary.from()&&station<=theirAuxiliary.to()?null:b.center().sub(a.center()).horizontalUnit();
-          add(material,strip.al(),strip.ar(),strip.br(),true,tangent,ourAuxiliary);
-          add(material,strip.al(),strip.br(),strip.bl(),true,tangent,ourAuxiliary);
+          V tangent=!legacy&&theirAuxiliary!=null&&station>=theirAuxiliary.from()&&station<=theirAuxiliary.to()?null:b.center().sub(a.center()).horizontalUnit();
+          add(material,strip.al(),strip.ar(),strip.br(),true,tangent,legacy?null:ourAuxiliary);
+          add(material,strip.al(),strip.br(),strip.bl(),true,tangent,legacy?null:ourAuxiliary);
           // Only exposed band boundaries get an inset. Zero-size slots split a
           // continuous face too, but those split lines must not become false gutters.
           double highA=strip.al().distance(a.at(a.halfWidth(),0))<1e-6?inset(mesh,a,1,paintInset):INSET,highB=strip.bl().distance(b.at(b.halfWidth(),0))<1e-6?inset(mesh,b,1,paintInset):INSET;

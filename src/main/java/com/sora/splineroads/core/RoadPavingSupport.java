@@ -62,11 +62,31 @@ public final class RoadPavingSupport {
     }
     return terrain.getAsDouble();
   }
+  private static boolean belowPaving(Part part,Part paving){
+    var roof=part.top();var surface=paving.top();boolean contact=false;
+    for(int i=1;i<roof.size()-1;i++){
+      var top=List.of(roof.get(0),roof.get(i),roof.get(i+1));
+      if(RoadSurface.area(top)<1e-10)continue;
+      var high=new Patch(part,top,0);
+      for(int j=1;j<surface.size()-1;j++){
+        var floor=List.of(surface.get(0),surface.get(j),surface.get(j+1));
+        if(RoadSurface.area(floor)<1e-10)continue;
+        var overlap=RoadSurface.intersect(top,floor);if(RoadSurface.area(overlap)<1e-9)continue;
+        contact=true;var low=new Patch(paving,floor,0);
+        for(var point:overlap)if(high.height(point)>low.height(point)+.025)return false;
+      }
+    }
+    return contact;
+  }
   /** Allow a concrete shaft's bottom to bear slightly into a sloped slab.
    * Upper walkways, side impacts, steel furniture and deep penetration still block. */
-  public boolean blocks(Part part){
+  public boolean blocks(Part part){return blocks(part,p->false);}
+  /** A caller may identify pavement on a joined road. Only a slab which stays
+   * below that pavement's actual top can share its floor at the common seam. */
+  public boolean blocks(Part part,java.util.function.Predicate<Part> joinedFloor){
     var seen=new HashSet<Part>();
     for(var patch:near(part.base()))if(seen.add(patch.part())&&RoadSolidOverlap.intersects(part,patch.part())){
+      if(!part.pier()&&part.material()==Material.CONCRETE&&joinedFloor.test(patch.part())&&belowPaving(part,patch.part()))continue;
       if(!part.pier()||part.material()!=Material.CONCRETE)return true;
       var floor=part.base();
       double bottom=floor.stream().mapToDouble(V::y).min().orElseThrow();

@@ -35,7 +35,7 @@ public final class OneSidedJunctions {
     tool.remove("ElevatedSelection");tool.remove("SideSelection");tool.remove("Start");tool.remove(CurveControlNodes.KEY);tool.putUUID("SideMain",road.record.id());tool.putUUID("SidePoint",point.id());tool.putString("Dimension",dimension);
     player.displayClientMessage(net.minecraft.network.chat.Component.literal("已选附属点 A，请右键端点或另一主路附属点 B；单行连接按 A→B"),true);
   }
-  private static CompoundTag selection(CompoundTag command){var t=new CompoundTag();for(String key:List.of("Main","AttachedPoint","Branch","MainFirst","Paired","MainB","AttachedPointB"))if(command.contains(key))t.put(key,command.get(key).copy());return t;}
+  private static CompoundTag selection(CompoundTag command){var t=new CompoundTag();for(String key:List.of("Main","AttachedPoint","Branch","MainFirst","Paired","MainB","AttachedPointB","MixedMarker","Marker","MixedLink"))if(command.contains(key))t.put(key,command.get(key).copy());return t;}
   private static void openSelection(ServerPlayer player,CompoundTag tool,CompoundTag command){tool.put("SideSelection",selection(command));com.sora.splineroads.net.RoadNetwork.open(player,SideRoads.payload(command));}
   public static String buildRoadSelected(ServerLevel level,ServerPlayer player,CompoundTag command,net.minecraft.world.item.ItemStack stack){
     var tool=stack.getOrCreateTag();
@@ -54,11 +54,14 @@ public final class OneSidedJunctions {
   static boolean saved(RoadData data,UUID group){return group!=null&&data.junctions.getOrDefault(group,new CompoundTag()).getBoolean("OneSided");}
   public static CompoundTag create(ServerLevel level,ServerPlayer player,UUID mainId,UUID pointId,BlockPos branch,boolean mainFirst,Settings fallback){
     var main=RoadData.get(level).index.roads.get(mainId);if(main==null)throw new IllegalArgumentException("主路已变化，请重新选择附属点");
+    JunctionPointTool.requireDifferent(level,branch,main.record);
     if(!SideHosts.attachable(main.record))throw new IllegalArgumentException("请选择普通主路路段的附属点；不能直接占用路口铺装或立交组成段");
+    if(level.getBlockEntity(branch) instanceof NodeEntity node&&node.junctionSource!=null)return JunctionPointConnections.create(level,player,main.record,pointId,branch,mainFirst,fallback);
     var t=new CompoundTag();t.putBoolean("OneSided",true);t.putUUID("Main",mainId);t.putUUID("AttachedPoint",pointId);t.putLong("Branch",branch.asLong());t.putBoolean("MainFirst",mainFirst);t.put("Fallback",RoadRecord.writeSettings(fallback));
     var original=SideHosts.original(RoadData.get(level),main.record);t.put("OriginalMain",original.save());return fresh(level,player,t,original);
   }
   public static CompoundTag payload(ServerLevel level,ServerPlayer player,UUID group){
+    if(JunctionPointConnections.saved(RoadData.get(level),group))return JunctionPointConnections.payload(level,player,group);
     if(PairedSideJunctions.saved(RoadData.get(level),group))return PairedSideJunctions.payload(level,player,group);
     var saved=RoadData.get(level).junctions.get(group);if(saved==null||!saved.getBoolean("OneSided"))throw new IllegalArgumentException("单边路口已经不存在");
     if(player!=null)RoadData.requireOwner(player,saved.getUUID("Owner"));
@@ -73,6 +76,7 @@ public final class OneSidedJunctions {
     var point=options.attachments().points().stream().filter(p->p.id().equals(t.getUUID("AttachedPoint"))).findFirst().orElseThrow(()->new IllegalArgumentException("主路附属点已改变，请重新选择"));
     var at=RoadQueries.horizontal(mesh,point.position()).sample();BlockPos branch=BlockPos.of(t.getLong("Branch"));
     if(branch.equals(original.a())||branch.equals(original.b()))throw new IllegalArgumentException("支路端点不能是主路自身端点");
+    if(virtual==null)JunctionPointTool.requireDifferent(level,branch,original);
     Node node=virtual==null?RoadData.requireNode(level,branch,player).constructionNode():virtual;V inward=at.center().sub(node.position()).horizontalUnit();
     int side=node.position().sub(at.center()).dot(at.left())>0?1:-1;
     var data=RoadData.get(level);UUID group=t.hasUUID("Id")?t.getUUID("Id"):null;
@@ -123,6 +127,8 @@ public final class OneSidedJunctions {
     return build(level,player,command,null);
   }
   private static String build(ServerLevel level,ServerPlayer player,CompoundTag command,Settings roadSettings){
+    if(command.getBoolean("MixedMarker")||command.hasUUID("Id")&&JunctionPointConnections.saved(RoadData.get(level),command.getUUID("Id")))return JunctionPointConnections.build(level,player,command,roadSettings);
+    if(!command.hasUUID("Id")&&!command.getBoolean("MixedMarker")&&level.getBlockEntity(BlockPos.of(command.getLong("Branch"))) instanceof NodeEntity marker&&marker.junctionSource!=null)throw new IllegalArgumentException("请重新选择路口点与附属点");
     if(command.getBoolean("Paired")||command.hasUUID("Id")&&PairedSideJunctions.saved(RoadData.get(level),command.getUUID("Id")))return PairedSideJunctions.build(level,player,command,roadSettings);
     try(var work=RoadWorkChunks.open(level)){
       var data=RoadData.get(level);UUID group=command.hasUUID("Id")?command.getUUID("Id"):UUID.randomUUID();boolean editing=command.hasUUID("Id");

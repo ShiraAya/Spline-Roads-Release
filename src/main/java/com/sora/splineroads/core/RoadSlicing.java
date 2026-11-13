@@ -10,10 +10,11 @@ public final class RoadSlicing {
     public Patch {strips=List.copyOf(strips);if(!RoadGeometry.finite(from,to)||from<0||to<=from||strips.size()>(clipped?4096:16))throw new IllegalArgumentException("分割切面无效");}
   }
   public record Geometry(List<Patch> patches,boolean clipped){public Geometry(List<Patch> patches){this(patches,false);}public Geometry{patches=List.copyOf(patches);if(patches.size()>(clipped?8192:4))throw new IllegalArgumentException("分割切面数量无效");}}
-  public record Fragment(UUID source,double origin,double total,Connection connection,RoadAttachments.Data applied,Geometry geometry,List<RoadStructures.Part> supports){
+  public record Fragment(UUID source,double origin,double total,Connection connection,RoadAttachments.Data applied,Geometry geometry,List<RoadStructures.Part> supports,List<RoadProfile.Control> curveAnchors){
+    public Fragment(UUID source,double origin,double total,Connection connection,RoadAttachments.Data applied,Geometry geometry,List<RoadStructures.Part> supports){this(source,origin,total,connection,applied,geometry,supports,List.of());}
     public Fragment(UUID source,double origin,double total,Connection connection,RoadAttachments.Data applied,Geometry geometry){this(source,origin,total,connection,applied,geometry,List.of());}
-    public Fragment {supports=List.copyOf(supports);if(supports.size()>50000)throw new IllegalArgumentException("分割桥墩数量过多");Objects.requireNonNull(source);Objects.requireNonNull(connection);Objects.requireNonNull(applied);Objects.requireNonNull(geometry);if(!RoadGeometry.finite(origin,total)||origin<0||total<=0||origin>=total)throw new IllegalArgumentException("分割路径范围无效");}
-    public Fragment geometry(Geometry value){return new Fragment(source,origin,total,connection,applied,value,supports);}
+    public Fragment {curveAnchors=List.copyOf(curveAnchors);if(curveAnchors.size()>32)throw new IllegalArgumentException("分割曲线点数量无效");supports=List.copyOf(supports);if(supports.size()>50000)throw new IllegalArgumentException("分割桥墩数量过多");Objects.requireNonNull(source);Objects.requireNonNull(connection);Objects.requireNonNull(applied);Objects.requireNonNull(geometry);if(!RoadGeometry.finite(origin,total)||origin<0||total<=0||origin>=total)throw new IllegalArgumentException("分割路径范围无效");}
+    public Fragment geometry(Geometry value){return new Fragment(source,origin,total,connection,applied,value,supports,curveAnchors);}
   }
   public record Slice(Mesh mesh,Geometry geometry){}
   public static Mesh attach(Mesh mesh,Geometry geometry){return new Mesh(mesh.samples(),mesh.settings(),mesh.min(),mesh.max(),mesh.length(),mesh.closed(),mesh.controlPoint(),mesh.controls(),mesh.reference(),geometry);}
@@ -77,6 +78,7 @@ public final class RoadSlicing {
   }
   /** Apply only edits made after the saved path already incorporated its controls. */
   public static Mesh deform(Mesh base,Settings settings,Fragment fragment){
+    base=deformCurve(base,settings,fragment);
     var current=settings.options().attachments();if(current.points().equals(fragment.applied().points()))return base;
     var before=new HashMap<UUID,RoadAttachments.Point>();for(var p:fragment.applied().points())before.put(p.id(),p);
     var after=new HashMap<UUID,RoadAttachments.Point>();for(var p:current.points())after.put(p.id(),p);
@@ -88,6 +90,33 @@ public final class RoadSlicing {
     }
     var temp=settings.options(settings.options().attachments(new RoadAttachments.Data(controls,current.spans())));var result=RoadAttachments.deform(base,temp);
     return new Mesh(result.samples(),settings,result.min(),result.max(),result.length(),false);
+  }
+  /** A split's local handles deform its saved subpath instead of refitting the old whole curve. */
+  public static boolean localCurve(Fragment fragment,RoadProfile.Routing before,RoadProfile.Routing after){
+    return fragment!=null&&!fragment.curveAnchors().isEmpty()
+        &&before.controls(List.of()).equals(after.controls(List.of()));
+  }
+  private static Mesh deformCurve(Mesh base,Settings settings,Fragment fragment){
+    var anchors=fragment.curveAnchors();var current=settings.options().routing().controls();
+    if(anchors.isEmpty()||anchors.equals(current))return base;
+    var before=new HashMap<UUID,RoadProfile.Control>();for(var a:anchors)before.put(a.id(),a);
+    var offsets=new TreeMap<Double,V>();offsets.put(0.0,new V(0,0,0));offsets.put(base.length(),new V(0,0,0));
+    for(var p:current){var a=before.get(p.id());
+      double d=RoadAttachments.station(base,a==null?p.position():a.position());
+      if(d<=1e-6||d>=base.length()-1e-6)throw new IllegalArgumentException("分割曲线点须位于当前路段内部");
+      V anchor=a==null?at(base,d).center():a.position();
+      offsets.put(d,p.position().sub(anchor));
+    }
+    var stations=new TreeSet<Double>(offsets.keySet());for(var p:base.samples())stations.add(p.distance());
+    var knots=new ArrayList<>(offsets.keySet());var points=new ArrayList<Sample>();double previous=-1;
+    for(double d:stations){if(d-previous<1e-6)continue;previous=d;
+      int i=0;while(i+1<knots.size()-1&&d>knots.get(i+1))i++;
+      double a=knots.get(i),b=knots.get(i+1),t=(d-a)/(b-a),u=t*t*(3-2*t);
+      V delta=offsets.get(b).sub(offsets.get(a));var at=at(base,d);
+      V direction=at.left().left().mul(-1).add(delta.mul(6*t*(1-t)/(b-a))).horizontalUnit();
+      points.add(new Sample(at.center().add(offsets.get(a)).add(delta.mul(u)),direction.left(),d,at.halfWidth()));
+    }
+    var result=RoadRibbon.mesh(points,settings);RoadRibbon.checkSelfIntersections(result,4);return result;
   }
   private RoadSlicing(){}
 }

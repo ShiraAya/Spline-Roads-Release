@@ -91,7 +91,7 @@ public final class LaneRampPaint {
   public static boolean guideFits(Mesh host,Sample a,Sample b,int side,Mesh ramp){
     for(var at:List.of(a,RoadStructures.sample(host,(a.distance()+b.distance())/2),b)){
       var layout=RoadProfile.layout(host,at);
-      double edge=layout.cycleWidth()>.01?layout.outer(side):side*at.halfWidth();
+      double edge=layout.cycleWidth()>.01||layout.catalog().type()==RoadProfile.Type.HIGHWAY?layout.outer(side):side*at.halfWidth();
       for(double offset:new double[]{.15,1.25})
         if(!RoadQueries.contains(ramp,at.at(edge+side*offset,0),0,.06))return false;
     }

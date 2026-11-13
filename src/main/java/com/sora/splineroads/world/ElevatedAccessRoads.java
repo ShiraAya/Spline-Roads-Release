@@ -43,10 +43,38 @@ public final class ElevatedAccessRoads {
       for(var r:neighbors){var before=data.index.roads.get(r.id());if(before==null||!sameGeometry(before.record,r))throw new IllegalArgumentException("该道路尽头连接高架出入口，请先删除连接再改变其线形或断面");}
     }
   }
-  private static boolean sameGeometry(RoadRecord a,RoadRecord b){return a.start().equals(b.start())&&a.end().equals(b.end())
-      &&a.rawMesh().samples().equals(b.rawMesh().samples())&&a.settings().thickness()==b.settings().thickness()
+  private static boolean sameGeometry(RoadRecord a,RoadRecord b){return sameNode(a.start(),b.start())&&sameNode(a.end(),b.end())
+      &&sameSamples(a.rawMesh().samples(),b.rawMesh().samples())&&a.settings().thickness()==b.settings().thickness()
       &&a.settings().style()==b.settings().style()&&RoadLanes.counts(a.settings()).equals(RoadLanes.counts(b.settings()))
-      &&a.settings().options().leftTraffic()==b.settings().options().leftTraffic()&&a.settings().options().ends().equals(b.settings().options().ends());}
+      &&a.settings().options().leftTraffic()==b.settings().options().leftTraffic()&&sameEnds(a.settings(),b.settings());}
+  private static boolean sameMeasure(double a,double b){return Math.abs(a-b)<=1e-9;}
+  private static boolean sameNode(Node a,Node b){return a.position().distance(b.position())<=1e-9&&sameMeasure(a.yaw(),b.yaw())&&sameMeasure(a.grade(),b.grade());}
+  private static boolean sameSamples(List<Sample> a,List<Sample> b){
+    if(a.size()!=b.size())return false;for(int i=0;i<a.size();i++){var x=a.get(i);var y=b.get(i);
+      if(x.center().distance(y.center())>1e-9||x.left().distance(y.left())>1e-9||!sameMeasure(x.distance(),y.distance())||!sameMeasure(x.halfWidth(),y.halfWidth()))return false;
+    }return true;
+  }
+  // Adding an identical continuation materializes a formerly implicit end section.
+  // Accept that representation change only; changed physical sections stay protected.
+  private static boolean sameEnds(Settings a,Settings b){
+    var x=a.options().ends();var y=b.options().ends();if(x.equals(y))return true;
+    return x.persistent()==y.persistent()&&sameMeasure(x.trimmedStart(),y.trimmedStart())&&sameMeasure(x.trimmedEnd(),y.trimmedEnd())
+        &&Objects.equals(x.port(),y.port())&&sameMeasure(x.paintPhase(),y.paintPhase())&&sameMeasure(x.startHold(),y.startHold())&&sameMeasure(x.endHold(),y.endHold())
+        &&sameTerminal(x.start(),y.start(),a,b)&&sameTerminal(x.end(),y.end(),a,b);
+  }
+  private static boolean sameTerminal(RoadTransitions.Section a,RoadTransitions.Section b,Settings ownA,Settings ownB){
+    if(Objects.equals(a,b))return true;if(a!=null&&b!=null)return false;
+    var x=a==null?RoadTransitions.Section.of(ownA):a;var y=b==null?RoadTransitions.Section.of(ownB):b;
+    var wx=x.sidewalk()==null?RoadSidewalks.Config.DEFAULT:x.sidewalk();var wy=y.sidewalk()==null?RoadSidewalks.Config.DEFAULT:y.sidewalk();
+    if(wx.enabled()!=wy.enabled()||wx.enabled()&&!wx.equals(wy)||x.cycle()!=y.cycle()||x.curb()!=y.curb()||x.cycleRail()!=y.cycleRail()||x.outerRail()!=y.outerRail()||x.cycleAsphalt()!=y.cycleAsphalt()||!Objects.equals(x.streetscape(),y.streetscape()))return false;
+    var lx=x.layout(ownA.options().leftTraffic());var ly=y.layout(ownB.options().leftTraffic());
+    if(!lx.catalog().equals(ly.catalog())||lx.outside()!=ly.outside())return false;
+    double[] ax={x.width(),lx.laneWidth(),lx.median(),lx.motorMin(),lx.motorMax(),lx.cycleWidth(),lx.curbWidth(),lx.shoulderWidth(),lx.medianCenter(),x.port()==null?lx.curbWidth():x.port().curbLeft(),x.port()==null?lx.curbWidth():x.port().curbRight()};
+    double[] ay={y.width(),ly.laneWidth(),ly.median(),ly.motorMin(),ly.motorMax(),ly.cycleWidth(),ly.curbWidth(),ly.shoulderWidth(),ly.medianCenter(),y.port()==null?ly.curbWidth():y.port().curbLeft(),y.port()==null?ly.curbWidth():y.port().curbRight()};
+    for(int i=0;i<ax.length;i++)if(Math.abs(ax[i]-ay[i])>1e-9)return false;
+    var dx=lx.dividers().stream().sorted().toList();var dy=ly.dividers().stream().sorted().toList();if(dx.size()!=dy.size())return false;
+    for(int i=0;i<dx.size();i++)if(Math.abs(dx.get(i)-dy.get(i))>1e-9)return false;return true;
+  }
   static void prune(RoadData data){data.interchanges.entrySet().removeIf(e->e.getValue().getBoolean("ElevatedAccess")&&!data.index.roads.containsKey(e.getKey()));}
   private static RoadIndex.Built host(RoadData data,UUID id){var b=data.index.roads.get(id);
     if(b==null||b.record.assembly()!=null||b.record.junction()!=null||b.record.toll()!=null||b.record.railway()||LaneTopology.metadata(b.record).link()!=null)

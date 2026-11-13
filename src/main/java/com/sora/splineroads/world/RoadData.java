@@ -102,14 +102,27 @@ public final class RoadData extends SavedData {
   };
 
   public static RoadData get(ServerLevel level) {
-    var data=level.getDataStorage().computeIfAbsent(RoadData::load, RoadData::new, "splineroads");data.owningLevel=level;return data;
+    var storage=level.getDataStorage();var data=storage.get(RoadData::load,"splineroads");
+    if(data==null){
+      // DimensionDataStorage logs and returns null when a loader throws. Never
+      // mistake an unreadable existing save for an empty new world.
+      var folder=net.minecraft.world.level.dimension.DimensionType.getStorageFolder(level.dimension(),level.getServer().getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT));
+      if(java.nio.file.Files.exists(folder.resolve("data").resolve("splineroads.dat")))
+        throw new IllegalStateException("Spline Roads saved data could not be loaded; original file preserved. See the saved-data error in the server log.");
+      data=new RoadData();storage.set("splineroads",data);
+    }
+    data.owningLevel=level;return data;
   }
 
   public static RoadData load(CompoundTag root) {
-    if (root.getInt("Version") > 71)
+    if (root.getInt("Version") > 73)
       throw new IllegalStateException("Spline Roads save is newer than this mod");
-    if (root.getInt("Version") < 71)
-      throw new IllegalStateException("Spline Roads 2.0 requires a new save");
+    if (root.getInt("Version") < 70)
+      throw new IllegalStateException("Spline Roads supports save format 70 or newer; original file preserved");
+    if(root.getInt("Version")==70)for(String kind:List.of("Roads","LogicalStreets"))for(Tag entry:root.getList(kind,Tag.TAG_COMPOUND)){
+      var legacy=((CompoundTag)entry).getCompound("Settings").getCompound("Infrastructure").getList("Signs",Tag.TAG_COMPOUND);
+      if(!legacy.isEmpty())throw new IllegalStateException("Spline Roads format 70 contains retired custom signs; conversion required, original file preserved");
+    }
     long loadStarted=System.nanoTime();
     RoadData data = new RoadData();
     data.railbeds.load(root.getCompound("Railbeds"));
@@ -199,7 +212,7 @@ public final class RoadData extends SavedData {
   @Override
   public CompoundTag save(CompoundTag root) {
     root.put("Railbeds",railbeds.save());
-    root.putInt("Version", 71);
+    root.putInt("Version", 73);
     var supportRepairs=new ListTag();for(UUID id:supportRepair104){var t=new CompoundTag();t.putUUID("Road",id);supportRepairs.add(t);}root.put("SupportRepair104",supportRepairs);
     var repair103=new ListTag();structureRepair103.forEach((chunk,parts)->{var t=new CompoundTag();t.putLong("Chunk",chunk);t.putByteArray("Parts",RoadRecord.packStructures(parts));repair103.add(t);});root.put("StructureRepair103",repair103);
     root.putLongArray("ApronWidthRepair",apronWidthRepair.keySet().stream().mapToLong(Long::longValue).toArray());
@@ -274,6 +287,8 @@ public final class RoadData extends SavedData {
   public RoadRecord connect(ServerLevel level,ServerPlayer player,BlockPos a,BlockPos b,Settings settings,UUID replace,boolean levelEnds,boolean forceJunction) {return connect(level,player,a,b,settings,replace,levelEnds,forceJunction,forceJunction);}
   public RoadRecord connect(ServerLevel level,ServerPlayer player,BlockPos a,BlockPos b,Settings settings,UUID replace,boolean levelEnds,boolean forceA,boolean forceB) {return connect(level,player,a,b,settings,replace,levelEnds,forceA,forceB,List.of());}
   public RoadRecord connect(ServerLevel level,ServerPlayer player,BlockPos a,BlockPos b,Settings settings,UUID replace,boolean levelEnds,boolean forceA,boolean forceB,List<BlockPos> controlNodes) {
+    if(replace==null)JunctionPointTool.requireDifferent(level,a,b);
+    else if(JunctionPointConnections.group(this,replace)!=null)throw new IllegalArgumentException("请使用附属点连接道路的整体编辑器");
     if(settings.style()==Style.TOLL)throw new IllegalArgumentException("请使用收费站生成器");
     if(TollRoads.reverseConnection(this,a,b))return connectDirected(level,player,b,a,settings,replace,levelEnds,forceB,forceA,controlNodes);
     return connectDirected(level,player,a,b,settings,replace,levelEnds,forceA,forceB,controlNodes);
@@ -1374,6 +1389,24 @@ public final class RoadData extends SavedData {
         entry.setValue(empty);checkedSetBlock(level,pos,empty,net.minecraft.world.level.block.Block.UPDATE_CLIENTS|net.minecraft.world.level.block.Block.UPDATE_KNOWN_SHAPE);
       }
     }
+    // Forward terrain restoration may change the neighbours of fences, walls,
+    // stairs, etc. Their archived connection properties are not an immutable
+    // block identity. Reconcile only same-block, same-fluid states without a
+    // block entity; destructive/support changes and exact rollback still fail.
+    if(terrainRestore)for(int pass=0;pass<8;pass++){
+      boolean adjusted=false;
+      for(var entry:states.entrySet())try{
+        var pos=BlockPos.of(entry.getKey());var state=entry.getValue();
+        var stable=net.minecraft.world.level.block.Block.updateFromNeighbourShapes(state,level,pos);
+        if(!stable.equals(state)&&stable.getBlock()==state.getBlock()&&!state.hasBlockEntity()
+            &&stable.getFluidState().equals(state.getFluidState())){
+          requireBlockState(level,pos,state);
+          checkedSetBlock(level,pos,stable,net.minecraft.world.level.block.Block.UPDATE_CLIENTS|net.minecraft.world.level.block.Block.UPDATE_KNOWN_SHAPE);
+          entry.setValue(stable);changed.putIfAbsent(entry.getKey(),state);adjusted=true;
+        }
+      }catch(RuntimeException failure){failed.accept(failure);}
+      if(!adjusted)break;
+    }
     for(var entry:entities.entrySet())try{
       var pos=BlockPos.of(entry.getKey());var state=states.get(entry.getKey());requireBlockState(level,pos,state);
       // load() need not clear absent optional fields (e.g. NodeEntity.Owner or
@@ -1862,6 +1895,19 @@ public final class RoadData extends SavedData {
     }
   }
 
+  /** Refreshing an existing road must not reject an unchanged local contact with
+   * another retained road's endpoint. New body/air and orphan markers still block. */
+  private boolean retainedNodeContact(BlockPos pos,RoadIndex.Built next,List<RoadIndex.Built> finalRoads){
+    var before=index.roads.get(next.record.id());
+    if(before==null||!before.boxes(pos).equals(next.boxes(pos))
+        ||next.clearanceAt(pos)&&!before.clearanceAt(pos))return false;
+    return finalRoads.stream().anyMatch(road->{
+      if(!road.record.a().equals(pos)&&!road.record.b().equals(pos))return false;
+      var old=index.roads.get(road.record.id());
+      return old!=null&&(old.record.a().equals(pos)||old.record.b().equals(pos));
+    });
+  }
+
   /** Reuses all geometry/raster planning; world protection and current block contents are
    * always checked again, before the first write. No route search occurs on this path. */
   private void validateAndCommit(ServerLevel level,ServerPlayer player,PreparedEdit edit,boolean preview){
@@ -1904,7 +1950,8 @@ public final class RoadData extends SavedData {
           if (!endpoints.contains(p)
               && !deleting
               && (walkway || committed.stream()
-                  .anyMatch(r -> r.cells.containsKey(key) || r.clearanceCells.contains(key))))
+                  .anyMatch(r -> (r.cells.containsKey(key) || r.clearanceCells.contains(key))
+                      && !retainedNodeContact(p,r,finalRoads))))
             throw new IllegalArgumentException("道路范围内有其他端点：" + p.toShortString());
           continue;
         }

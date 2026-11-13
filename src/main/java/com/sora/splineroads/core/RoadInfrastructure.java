@@ -8,7 +8,7 @@ import java.util.*;
 public final class RoadInfrastructure {
   public enum Bridge {
     STANDARD("普通高架",24), BEAM("小河梁桥",32), OVERPASS("跨线桥",64),
-    ARCH("大河拱桥",96), CABLE("斜拉桥",192), SUSPENSION("悬索桥",256), VIADUCT("跨海连续梁",64);
+    ARCH("大河拱桥",96), CABLE("斜拉桥",192), SUSPENSION("悬索桥",256), VIADUCT("跨海连续梁",64), TEMPLATE("空桥梁",24);
     public final String label; public final double span;
     Bridge(String label,double span){this.label=label;this.span=span;}
   }
@@ -29,7 +29,8 @@ public final class RoadInfrastructure {
     public final String label; Gantry(String label){this.label=label;}
   }
   public record Config(Bridge bridge,double span,Tunnel tunnel,double headroom,Gantry gantry,double spacing,
-      double tunnelDepth,List<RoadGantry.Edit> gantryEdits,RoadTunnelFit.Adjustment adjustment,boolean efficientDip,double bridgeRise,double maxGrade,boolean autoSpan,boolean fixedStations,MedianConversion medianConversion) {
+      double tunnelDepth,List<RoadGantry.Edit> gantryEdits,RoadTunnelFit.Adjustment adjustment,boolean efficientDip,double bridgeRise,double maxGrade,boolean autoSpan,boolean fixedStations,MedianConversion medianConversion,boolean supportsEnabled) {
+    public Config(Bridge bridge,double span,Tunnel tunnel,double headroom,Gantry gantry,double spacing,double depth,List<RoadGantry.Edit> edits,RoadTunnelFit.Adjustment adjustment,boolean efficientDip,double rise,double maxGrade,boolean autoSpan,boolean fixedStations,MedianConversion medianConversion){this(bridge,span,tunnel,headroom,gantry,spacing,depth,edits,adjustment,efficientDip,rise,maxGrade,autoSpan,fixedStations,medianConversion,true);}
     public Config(Bridge bridge,double span,Tunnel tunnel,double headroom,Gantry gantry,double spacing,double depth,List<RoadGantry.Edit> edits,RoadTunnelFit.Adjustment adjustment,boolean efficientDip,double rise,double maxGrade,boolean autoSpan){this(bridge,span,tunnel,headroom,gantry,spacing,depth,edits,adjustment,efficientDip,rise,maxGrade,autoSpan,false,MedianConversion.OFF);}
     public static final Config DEFAULT=new Config(Bridge.STANDARD,24,Tunnel.BOX,6,Gantry.OFF,128,0,List.of(),RoadTunnelFit.Adjustment.OFF,true,0,.06,true);
     public Config(Bridge bridge,double span,Tunnel tunnel,double headroom,Gantry gantry,double spacing){
@@ -51,34 +52,35 @@ public final class RoadInfrastructure {
       if(gantryEdits.size()>RoadGantry.MAX_SLOTS||gantryEdits.stream().map(RoadGantry.Edit::slot).distinct().count()!=gantryEdits.size())
         throw new IllegalArgumentException("龙门架编辑记录重复或过多");
     }
-    public Config bridge(Bridge v){return new Config(v,v.span,tunnel,headroom,gantry,spacing,tunnelDepth,gantryEdits,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion);}
-    public Config span(double v){return new Config(bridge,v,tunnel,headroom,gantry,spacing,tunnelDepth,gantryEdits,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion);}
-    public Config tunnel(Tunnel v){return new Config(bridge,span,v,headroom,gantry,spacing,tunnelDepth,gantryEdits,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion);}
-    public Config headroom(double v){return new Config(bridge,span,tunnel,v,gantry,spacing,tunnelDepth,gantryEdits,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion);}
-    public Config gantry(Gantry v){return new Config(bridge,span,tunnel,headroom,v,spacing,tunnelDepth,gantryEdits,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion);}
-    public Config spacing(double v){return new Config(bridge,span,tunnel,headroom,gantry,v,tunnelDepth,gantryEdits,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion);}
-    public Config gantryEdits(List<RoadGantry.Edit> values){return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,values,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion);}
-    public Config depth(double v){return new Config(bridge,span,tunnel,headroom,gantry,spacing,v,gantryEdits,adjustment,true,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion);}
-    public Config adjustment(RoadTunnelFit.Adjustment v){return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,gantryEdits,v,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion);}
-    public Config profile(boolean v){return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,gantryEdits,adjustment,v,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion);}
-    public Config clearEdits(){return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,List.of(),adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,false,medianConversion);}
+    public Config bridge(Bridge v){return new Config(v,v.span,tunnel,headroom,gantry,spacing,tunnelDepth,gantryEdits,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion,supportsEnabled);}
+    public Config span(double v){return new Config(bridge,v,tunnel,headroom,gantry,spacing,tunnelDepth,gantryEdits,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion,supportsEnabled);}
+    public Config tunnel(Tunnel v){return new Config(bridge,span,v,headroom,gantry,spacing,tunnelDepth,gantryEdits,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion,supportsEnabled);}
+    public Config headroom(double v){return new Config(bridge,span,tunnel,v,gantry,spacing,tunnelDepth,gantryEdits,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion,supportsEnabled);}
+    public Config gantry(Gantry v){return new Config(bridge,span,tunnel,headroom,v,spacing,tunnelDepth,gantryEdits,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion,supportsEnabled);}
+    public Config spacing(double v){return new Config(bridge,span,tunnel,headroom,gantry,v,tunnelDepth,gantryEdits,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion,supportsEnabled);}
+    public Config gantryEdits(List<RoadGantry.Edit> values){return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,values,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion,supportsEnabled);}
+    public Config depth(double v){return new Config(bridge,span,tunnel,headroom,gantry,spacing,v,gantryEdits,adjustment,true,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion,supportsEnabled);}
+    public Config adjustment(RoadTunnelFit.Adjustment v){return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,gantryEdits,v,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion,supportsEnabled);}
+    public Config profile(boolean v){return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,gantryEdits,adjustment,v,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion,supportsEnabled);}
+    public Config clearEdits(){return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,List.of(),adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,false,medianConversion,supportsEnabled);}
     public Config edit(RoadGantry.Edit value){
       var edits=new ArrayList<>(gantryEdits);edits.removeIf(e->e.slot()==value.slot());edits.add(value);
       edits.sort(Comparator.comparingInt(RoadGantry.Edit::slot));
-      return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,edits,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion);
+      return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,edits,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion,supportsEnabled);
     }
     public Config reset(int slot){
       var prior=gantryEdits.stream().filter(e->e.slot()==slot).findFirst().orElse(null);
       if(fixedStations&&prior!=null&&!prior.independent())return edit(prior.parameters(0,5.6,Gantry.AUTO,false));
-      return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,gantryEdits.stream().filter(e->e.slot()!=slot).toList(),adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion);
+      return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,gantryEdits.stream().filter(e->e.slot()!=slot).toList(),adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion,supportsEnabled);
     }
-    public Config fixedStations(List<RoadGantry.Edit> values){return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,values,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,true,medianConversion);}
-    public Config rise(double v){return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,gantryEdits,adjustment,efficientDip,v,maxGrade,autoSpan,fixedStations,medianConversion);}
-    public Config grade(double v){return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,gantryEdits,adjustment,efficientDip,bridgeRise,v,autoSpan,fixedStations,medianConversion);}
-    public Config autoSpan(boolean v){return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,gantryEdits,adjustment,efficientDip,bridgeRise,maxGrade,v,fixedStations,medianConversion);}
+    public Config fixedStations(List<RoadGantry.Edit> values){return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,values,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,true,medianConversion,supportsEnabled);}
+    public Config rise(double v){return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,gantryEdits,adjustment,efficientDip,v,maxGrade,autoSpan,fixedStations,medianConversion,supportsEnabled);}
+    public Config grade(double v){return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,gantryEdits,adjustment,efficientDip,bridgeRise,v,autoSpan,fixedStations,medianConversion,supportsEnabled);}
+    public Config autoSpan(boolean v){return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,gantryEdits,adjustment,efficientDip,bridgeRise,maxGrade,v,fixedStations,medianConversion,supportsEnabled);}
 
-    public Config medianConversion(MedianConversion v){return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,gantryEdits,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,v);}
+    public Config medianConversion(MedianConversion v){return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,gantryEdits,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,v,supportsEnabled);}
 
+    public Config supportsEnabled(boolean v){return new Config(bridge,span,tunnel,headroom,gantry,spacing,tunnelDepth,gantryEdits,adjustment,efficientDip,bridgeRise,maxGrade,autoSpan,fixedStations,medianConversion,v);}
   }
   public static boolean customBridge(Mesh mesh){return mesh.settings().structure()==Structure.BRIDGE&&mesh.settings().options().infrastructure().bridge()!=Bridge.STANDARD;}
   /** Immutable superstructure is visible before a batch reserves gantries.
@@ -198,18 +200,19 @@ public final class RoadInfrastructure {
     return t*t*(3-2*t);
   }
   public static double girderDepth(Mesh mesh){
-    if(!customBridge(mesh))return 0;
+    if(!customBridge(mesh)||!mesh.settings().options().infrastructure().supportsEnabled())return 0;
     var bridge=mesh.settings().options().infrastructure().bridge();return bridge==Bridge.BEAM?.7:bridge==Bridge.OVERPASS?.9:bridge==Bridge.CABLE||bridge==Bridge.SUSPENSION?Math.max(1.2,towerWidth(towerHeight(cableSpan(mesh),bridge))*.45):1.2;
   }
   public static double edgeReach(Mesh mesh,Sample sample){
     if(!customBridge(mesh))return 0;
     var bridge=mesh.settings().options().infrastructure().bridge();
-    return (bridge==Bridge.CABLE||bridge==Bridge.SUSPENSION?Math.max(2.1,2*towerRadius(sample,towerWidth(towerHeight(cableSpan(mesh),bridge)))+.95):bridge==Bridge.ARCH?1.25:.35)*endTaper(mesh,sample);
+    return (bridge==Bridge.CABLE||bridge==Bridge.SUSPENSION?Math.max(2.1,2*towerRadius(sample,towerWidth(towerHeight(cableSpan(mesh),bridge)))+.95):bridge==Bridge.ARCH?1.25:bridge==Bridge.TEMPLATE?2.1:.35)*endTaper(mesh,sample);
   }
   private static void bridge(Mesh mesh,Config c,Ground ground,List<Part> out){
     bridge(mesh,c,ground,out,true);
   }
   private static void bridge(Mesh mesh,Config c,Ground ground,List<Part> out,boolean includeSupports){
+    includeSupports &= c.supportsEnabled();
     double depth=girderDepth(mesh);
     // Two longitudinal box girders remain below the driving slab, following curve and grade.
     var stations=new TreeSet<Double>();for(double d=0;d<mesh.length();d+=2)stations.add(d);stations.add(mesh.length());
@@ -222,7 +225,7 @@ public final class RoadInfrastructure {
       // footing belongs to the remaining slab, not to an invisible beam over the ramp.
       for(var cut:mesh.settings().options().lanePoints().cuts())if(cut.temporary()&&cut.removed(middle)>.999)bearing=LaneDeck.excludingSlot(bearing,cut.lane());
       for(int side:new int[]{-1,1}){
-        girder(out,bearing,a,b,side*a.halfWidth()*.62,side*b.halfWidth()*.62,
+        if(c.supportsEnabled())girder(out,bearing,a,b,side*a.halfWidth()*.62,side*b.halfWidth()*.62,
             -mesh.settings().thickness()-depth,Math.min(2.4,mesh.settings().width()/5),depth);
         if(c.bridge()==Bridge.BEAM||c.bridge()==Bridge.OVERPASS)continue;
         if(LaneDeck.outerOpening(mesh,middle,side))continue;
@@ -240,7 +243,7 @@ public final class RoadInfrastructure {
     // These two bridge types have the same non-bearing fascia as AUTO decks.
     // Clip it at joined paved edges; the full slab and box girders remain checked.
     if(c.bridge()==Bridge.BEAM||c.bridge()==Bridge.OVERPASS)out.addAll(RoadStructures.edgeSlabs(mesh,ground));
-    int spans=c.autoSpan()&&(c.bridge()==Bridge.CABLE||c.bridge()==Bridge.SUSPENSION)?1:Math.max(1,(int)Math.ceil(mesh.length()/c.span()-1e-3));double span=mesh.length()/spans;
+    int spans=c.autoSpan()&&(c.bridge()==Bridge.CABLE||c.bridge()==Bridge.SUSPENSION||c.bridge()==Bridge.TEMPLATE)?1:Math.max(1,(int)Math.ceil(mesh.length()/c.span()-1e-3));double span=mesh.length()/spans;
     if(includeSupports)for(int i=0;i<=spans;i++)support(mesh,Math.min(mesh.length()-1,Math.max(1,i*span)),depth,c.bridge(),ground,out);
     for(int i=0;i<spans;i++){
       double start=i*span;
@@ -295,10 +298,10 @@ public final class RoadInfrastructure {
     var relocated=gap?List.<Part>of():RoadSupports.portal(portalSample,mesh.settings().thickness(),depth,
         portal?portalSample.halfWidth()+1.4:portalSample.halfWidth()*.62,shaftWidth,ground);
     if(!relocated.isEmpty()){out.addAll(relocated);return;}
-    // A support may land on the approach terrain, but not silently vanish over deep water.
+    // Missing foundations are optional; never relax the solid/clearance checks of placed parts.
     Sample s=sample(mesh,station);double floor=ground.top(s.center().x(),s.center().z(),s.center().y());
     if(!Double.isFinite(floor)||s.center().y()-floor>mesh.settings().thickness()+depth+1)
-      throw new IllegalArgumentException("桥墩无可用基础或与下方道路冲突；请调整桥跨、桥位或桥面高度");
+      ground.missingSupport(station,"桥墩无可用基础或与下方道路冲突，已省略");
   }
   private static void arch(Mesh mesh,double start,double length,List<Part> out){
     // Leave the bridge-to-approach seam clear. Anchor on the widened slab inside
@@ -344,7 +347,7 @@ public final class RoadInfrastructure {
       for(int side:new int[]{-1,1})post(out,at(s,side*(s.halfWidth()+offset),-mesh.settings().thickness()),width,tower+mesh.settings().thickness(),Material.CONCRETE);
       beam(out,at(s,-s.halfWidth()-offset,tower*.8),at(s,s.halfWidth()+offset,tower*.8),brace,brace,Material.CONCRETE);
       // Transverse foundation beam ties the outside towers to the paired piers.
-      beam(out,at(s,-s.halfWidth()-offset,-mesh.settings().thickness()-depth),at(s,s.halfWidth()+offset,-mesh.settings().thickness()-depth),Math.max(2.4,width+.4),depth,Material.CONCRETE);
+      if(mesh.settings().options().infrastructure().supportsEnabled())beam(out,at(s,-s.halfWidth()-offset,-mesh.settings().thickness()-depth),at(s,s.halfWidth()+offset,-mesh.settings().thickness()-depth),Math.max(2.4,width+.4),depth,Material.CONCRETE);
       if(style==Bridge.CABLE)for(int side:new int[]{-1,1})for(int j=0;j<=10;j++){
         double t=(fraction<.5?0:.5)+j*.05;Sample anchor=sample(mesh,start+length*t);
         if(Math.abs(t-fraction)<.03)continue;

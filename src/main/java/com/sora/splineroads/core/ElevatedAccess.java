@@ -91,7 +91,7 @@ public final class ElevatedAccess {
     candidates=new ArrayList<>(candidates);candidates.sort(Comparator.comparingDouble(c->c.mesh().length()));
     String error="没有满足坡度、转弯半径和下方通行净空的高架连接";
     for(var candidate:candidates)try{
-      var path=holdMouth(candidate.mesh(),host,center,axis);var cuts=new ArrayList<LaneSections.Cut>();var additions=new ArrayList<LaneAdditions.Addition>();var gaps=new ArrayList<Gap>();
+      var path=holdMouth(candidate.mesh(),host,station,center,axis);var cuts=new ArrayList<LaneSections.Cut>();var additions=new ArrayList<LaneAdditions.Addition>();var gaps=new ArrayList<Gap>();
       int slot=LaneAdditions.FIRST_NEW_SLOT;var used=new HashSet<Integer>();for(var addition:host.settings().options().lanePoints().additions())used.add(addition.slot());
       double medianFrom=station,medianTo=station;
       for(var direction:selected){double begin=station,end=station;
@@ -122,7 +122,8 @@ public final class ElevatedAccess {
     }catch(IllegalArgumentException failure){error=failure.getMessage();}
     throw new IllegalArgumentException(error);
   }
-  private static Mesh holdMouth(Mesh path,Mesh host,double offset,int axis){
+  private static Mesh holdMouth(Mesh path,Mesh host,double station,double offset,int axis){
+    var mouth=RoadStructures.sample(host,station);
     double hold=0;
     for(var sample:path.samples()){
       var lower=RoadQueries.horizontal(host,sample.center()).sample();
@@ -132,10 +133,10 @@ public final class ElevatedAccess {
     // An asymmetric host's median is not its centerline. Follow the selected
     // slots until clear before moving laterally toward the upper endpoint.
     double blend=Math.min(48,(path.length()-hold)*.75);var centers=new ArrayList<V>();int held=0;
-    for(int i=0;i<path.samples().size();i++){var sample=path.samples().get(i);var q=RoadQueries.horizontal(host,sample.center()).sample();V aligned=q.at(offset,0);
+    for(int i=0;i<path.samples().size();i++){var sample=path.samples().get(i);var q=i==0?mouth:RoadQueries.horizontal(host,sample.center()).sample();V aligned=q.at(offset,0);
       double t=Settings.smooth(Math.max(0,Math.min(1,(sample.distance()-hold)/blend)));var p=aligned.mul(1-t).add(sample.center().mul(t));centers.add(new V(p.x(),sample.center().y(),p.z()));if(sample.distance()<=hold)held=i;}
     var points=new ArrayList<Sample>();for(int i=0;i<centers.size();i++){
-      V left=i==0?RoadQueries.horizontal(host,centers.get(i)).sample().left().mul(axis):i==centers.size()-1?path.last().left():centers.get(i+1).sub(centers.get(i-1)).horizontalUnit().left();
+      V left=i==0?mouth.left().mul(axis):i==centers.size()-1?path.last().left():centers.get(i+1).sub(centers.get(i-1)).horizontalUnit().left();
       points.add(new Sample(centers.get(i),left,0,path.samples().get(i).halfWidth()));
     }
     var aligned=RoadRibbon.mesh(points,path.settings());hold=aligned.samples().get(held).distance();

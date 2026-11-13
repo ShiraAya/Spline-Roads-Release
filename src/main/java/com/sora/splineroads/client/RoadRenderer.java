@@ -203,11 +203,17 @@ public final class RoadRenderer {
   private static final class Preparation {
     final int version;final List<RoadMeshSurfaces.Window> windows;final Set<RoadMeshSurfaces.Window> surfaces=new HashSet<>(),terrain=new HashSet<>();
     final Map<Section,Prepared> pieces=new HashMap<>();final Set<Section> previous;final RoadIndex.Built source;RoadMeshSurfaces.Structures structures;RoadMeshSurfaces.Context context;
+    final boolean finishPrevious;
     final Map<RoadMeshSurfaces.Window,Map<Section,Prepared>> windowPieces=new LinkedHashMap<>();
     final RoadTerrainSourceWindows<RoadMeshSurfaces.Window> terrainIndex=new RoadTerrainSourceWindows<>();
     Preparation(UUID id,int version,RoadIndex.Built road){this.version=version;source=road;windows=RoadMeshSurfaces.windows(road);previous=Set.copyOf(roadSections.getOrDefault(id,Set.of()));
       var old=preparations.get(id);if(old!=null&&old.source==road){windowPieces.putAll(old.windowPieces);pieces.putAll(old.pieces);structures=old.structures;}
+      // Old regions without an inherited contribution can only be retired after
+      // this replacement's complete window union is known. Carry that obligation
+      // across another invalidation until the existing full-union cleanup runs.
+      finishPrevious=!pieces.keySet().containsAll(previous)||old!=null&&old.finishingPrevious();
     }
+    boolean finishingPrevious(){return finishPrevious&&surfaces.size()<windows.size();}
     Map<Section,Prepared> replace(RoadMeshSurfaces.Window window,Map<Section,Prepared> result){
       var old=windowPieces.put(window,result);Set<Section> affected=new HashSet<>(result.keySet());if(old!=null)affected.addAll(old.keySet());
       var changed=new LinkedHashMap<Section,Prepared>();for(var key:affected){Prepared combined=null;for(var part:windowPieces.values()){var contribution=part.get(key);if(contribution!=null)combined=combined==null?contribution:append(combined,contribution);}if(combined==null)pieces.remove(key);else{pieces.put(key,combined);changed.put(key,combined);}}return changed;
@@ -219,7 +225,7 @@ public final class RoadRenderer {
       if(surfaces.size()==windows.size()&&(!exact||terrain.size()==windows.size())){completedWindowSkips++;return null;}
       windowVisits+=windows.size();
       RoadMeshSurfaces.Window best=null;double nearest=Double.POSITIVE_INFINITY;
-      for(var window:windows)if((!surfaces.contains(window)||exact&&!terrain.contains(window))&&(atomicUpdates.containsKey(source.record.id())||RoadVisibility.within(window.min().x(),window.min().z(),window.max().x(),window.max().z(),cameraPosition.x(),cameraPosition.z(),Minecraft.getInstance().options.getEffectiveRenderDistance()+2))){
+      for(var window:windows)if((!surfaces.contains(window)||exact&&!terrain.contains(window))&&(atomicUpdates.containsKey(source.record.id())||finishingPrevious()||RoadVisibility.within(window.min().x(),window.min().z(),window.max().x(),window.max().z(),cameraPosition.x(),cameraPosition.z(),Minecraft.getInstance().options.getEffectiveRenderDistance()+2))){
         double distance=window.distance(cameraPosition);if(distance<nearest){nearest=distance;best=window;}
       }return best;
     }
@@ -576,7 +582,8 @@ public final class RoadRenderer {
   static void resume(UUID id){RoadTerrainModels.resume(id);enqueue(id);}
   private static void enqueue(UUID id){dirty.add(id);if(buildVisible(id))priorityDirty.add(id);}
   private static boolean buildVisible(UUID id){
-    if(atomicUpdates.containsKey(id))return ClientRoads.INDEX.roads.containsKey(id);
+    var preparation=preparations.get(id);
+    if(atomicUpdates.containsKey(id)||preparation!=null&&preparation.finishingPrevious())return ClientRoads.INDEX.roads.containsKey(id);
     if(!ClientRoads.active(id))return false;var road=ClientRoads.INDEX.roads.get(id);if(road==null)return false;
     return RoadVisibility.within(road.mesh.min().x(),road.mesh.min().z(),road.mesh.max().x(),road.mesh.max().z(),cameraPosition.x(),cameraPosition.z(),Minecraft.getInstance().options.getEffectiveRenderDistance()+2);
   }
@@ -1313,7 +1320,7 @@ public final class RoadRenderer {
     if(candidate!=null)edited=candidate.id();
     var fixed=candidate==null||candidate.fragment()==null?null:candidate.fragment().supports();
     var reference=candidate==null?null:candidate.terrainClassificationMesh();
-    var ground = RoadPreviewGround.create(level,mesh,edited,ClientRoads.INDEX.roads.values(),retained,fixed,reference);
+    var ground = RoadPreviewGround.create(level,mesh,edited,ClientRoads.INDEX.roads.values(),retained,fixed,reference,candidate);
     try {
       var phase = com.sora.splineroads.core.RoadFurniture.Phase.DEFAULT;
       var draft = ClientRoads.draft;

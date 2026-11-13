@@ -16,13 +16,16 @@ import net.minecraft.network.chat.Component;
 public final class InterchangeScreen extends Screen {
   private static final Map<Integer, CompoundTag> drafts = new HashMap<>();
   private static CompoundTag draft;
+  private record PreviewSnapshot(CompoundTag inputs, InterchangePlanner.Plan plan, String status) {}
+  private static final Map<Integer, PreviewSnapshot> previews = new HashMap<>();
   private static final LatestPlanningTask<InterchangePlanner.Plan> WORKER =
-      new LatestPlanningTask<>("SplineRoads interchange preview");
+      new LatestPlanningTask<>("SplineRoads interchange preview",120);
   private static long generation;
   private final CompoundTag payload;
   private final Map<String, EditBox> fields = new LinkedHashMap<>();
   private InterchangePlanner.Options options;
   private InterchangePlanner.Plan plan;
+  private CompoundTag plannedInputs;
   private Button save, preview, heights;
   private int left, top, panel, panelHeight, control, delay, page, axis = 1, endpointTextBottom;
   private int stylePage;
@@ -31,10 +34,15 @@ public final class InterchangeScreen extends Screen {
   private String deleteConfirmation = "";
   private boolean pending, initializing, computing, needsPlan;
   private String status = "正在计算整座立交…";
-  private void edited(){ClientRoads.editorChanged(this);pending=false;}
+  private void edited(){
+    previews.remove(payload.getLongArray("Points").length);
+    plannedInputs = null;
+    ClientRoads.editorChanged(this);pending=false;
+  }
 
   public static void clear() {
     drafts.clear();
+    previews.clear();
     draft = null;
     generation++;
     WORKER.cancel();
@@ -51,6 +59,7 @@ public final class InterchangeScreen extends Screen {
     String kind = fresh.getString("Kind");
     if (kind.equals("interchangeReset")) {
       drafts.remove(arms);
+      previews.remove(arms);
       draft = null;
       generation++;
     WORKER.cancel();
@@ -59,12 +68,25 @@ public final class InterchangeScreen extends Screen {
       return;
     }
     if (kind.equals("interchangeResume")) {
-      if (draft != null) mc.setScreen(new InterchangeScreen(draft));
+      if (draft != null) {
+        var screen = new InterchangeScreen(draft);
+        var previous = previews.get(arms);
+        // Only an unchanged return from this exact world preview can reuse its fit.
+        // A fresh server payload is always replanned, and submission still revalidates it.
+        if (previous != null && previous.inputs().equals(screen.payload)) {
+          screen.plan = previous.plan();
+          screen.plannedInputs = previous.inputs().copy();
+          screen.status = previous.status();
+          showPreview(screen.plan);
+        }
+        mc.setScreen(screen);
+      }
       else if (mc.player != null)
         mc.player.displayClientMessage(
             Component.literal(arms == 3 ? "先选 A/B 主路两端，再选 C 支路端点" : arms == 4 ? "依次选择 A/B 与 C/D 两条主路端点" : arms == 5 ? "依次选择 A/B、C/D 两条主路与 E 支路端点" : "依次选择 A/B、C/D、E/F 三条主路端点"), true);
       return;
     }
+    previews.remove(arms);
     CompoundTag merged = fresh.copy();
     if (draft != null
         && Arrays.equals(draft.getLongArray("Points"), fresh.getLongArray("Points"))
@@ -471,7 +493,9 @@ public final class InterchangeScreen extends Screen {
             Button.builder(
                     Component.literal("实景预览"),
                     b -> {
-                      persist();
+                      if (!capture()) return;
+                      stash();
+                      rememberPreview();
                       ManualPlannerClient.worldPreview();
                       minecraft.setScreen(null);
                     })
@@ -633,6 +657,20 @@ public final class InterchangeScreen extends Screen {
     if (capture()) stash();
   }
 
+  private void rememberPreview() {
+    int arms = payload.getLongArray("Points").length;
+    previews.remove(arms);
+    if (plan != null && !pending && !needsPlan && !computing
+        && plannedInputs != null && plannedInputs.equals(payload))
+      previews.put(arms, new PreviewSnapshot(plannedInputs.copy(), plan, status));
+  }
+
+  private static void showPreview(InterchangePlanner.Plan result) {
+    ClientRoads.nodePreviews = result.legs().stream()
+        .map(l -> RoadRenderMesh.simplify(l.mesh())).toList();
+    ClientRoads.preview = ClientRoads.nodePreviews.get(0);
+  }
+
   @Override
   public void tick() {
     super.tick();
@@ -647,6 +685,8 @@ public final class InterchangeScreen extends Screen {
       return;
     }
     persist();
+    previews.remove(payload.getLongArray("Points").length);
+    plannedInputs = null;
     plan = null;
     save.active = false;
     preview.active = false;
@@ -674,12 +714,9 @@ public final class InterchangeScreen extends Screen {
                             return;
                           }
                           plan = result;
+                          plannedInputs = inputs.copy();
                           updateHeightLabel();
-                          ClientRoads.nodePreviews =
-                              result.legs().stream()
-                                  .map(l -> RoadRenderMesh.simplify(l.mesh()))
-                                  .toList();
-                          ClientRoads.preview = ClientRoads.nodePreviews.get(0);
+                          showPreview(result);
                           status =
                               result.movements()
                                   + " 条转向 · 最小半径 "
@@ -703,6 +740,7 @@ public final class InterchangeScreen extends Screen {
                                   });
                           if (payload.getBoolean("Partial")) status += " · 更新将补回已删除路段";
                           if (adjusted()) status += " · 端点将调整，见端点页";
+                          else if(cutting())status += " · 将在范围边界新增切点";
                           save.active = !pending;
                           preview.active = true;
                         }));
@@ -782,9 +820,11 @@ public final class InterchangeScreen extends Screen {
       if (RoadRecord.readNode(old.getCompound(i))
               .position()
               .distance(plan.anchors().get(i).position())
-          > 1e-6) return true;
+          > 1e-6&&!ContinuousRoads.rangeBoundary(payload,i,plan.anchors().get(i))) return true;
     return false;
   }
+
+  private boolean cutting(){if(plan==null)return false;var old=payload.getList("Nodes",Tag.TAG_COMPOUND);for(int i=0;i<old.size();i++)if(RoadRecord.readNode(old.getCompound(i)).position().distance(plan.anchors().get(i).position())>1e-6&&ContinuousRoads.rangeBoundary(payload,i,plan.anchors().get(i)))return true;return false;}
 
   @Override
   public void render(GuiGraphics g, int mouseX, int mouseY, float partial) {
@@ -816,13 +856,14 @@ public final class InterchangeScreen extends Screen {
         V before = RoadRecord.readNode(old.getCompound(i)).position();
         V after = plan == null ? before : plan.anchors().get(i).position();
         String original=String.format(Locale.ROOT,"%c 原：%.1f, %.1f, %.1f",'A'+i,before.x(),before.y(),before.z());
-        String updated=String.format(Locale.ROOT,"%c → %.1f, %.1f, %.1f",'A'+i,after.x(),after.y(),after.z());
+        boolean cut=plan!=null&&before.distance(after)>1e-6&&ContinuousRoads.rangeBoundary(payload,i,plan.anchors().get(i));
+        String updated=String.format(Locale.ROOT,"%c%s → %.1f, %.1f, %.1f",'A'+i,cut?" 切点":"",after.x(),after.y(),after.z());
         if(stacked)endpointLine(g,original,y,0xA9BAC8);
         endpointLine(g,updated,y+(stacked?11:0),before.distance(after)>1e-6?0xFFD27C:0xBFE7D1);
         if((!stacked||font.width(original)>control||font.width(updated)>control)&&mouseX>=left+12&&mouseX<left+12+control&&mouseY>=y&&mouseY<y+row)endpointHint=List.of(Component.literal(original),Component.literal(updated));
         y += row;
       }
-      if(y+13<=statusY-6)endpointLine(g,"整体建造 / 更新时才移动端点",y+4,0xE0E8EF);
+      if(y+13<=statusY-6)endpointLine(g,cutting()?(adjusted()?"建造时新增切点并调整必要的外端点":"建造时新增边界切点，保留范围外道路"):"整体建造 / 更新时才移动端点",y+4,0xE0E8EF);
     }
     if(page==1)g.drawString(font,InterchangeStyleOptions.TITLES[stylePage]+" · "+(stylePage+1)+"/8",left+control+24,top+14,0xffffff,false);
     else if(page==0&&doubleDetails&&options.preset()==InterchangePlanner.Preset.DOUBLE_TRUMPET){

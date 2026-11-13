@@ -185,7 +185,7 @@ public final class RoadClearance {
     double from=Double.POSITIVE_INFINITY,to=Double.NEGATIVE_INFINITY,min=Double.POSITIVE_INFINITY;
     double otherFrom=Double.POSITIVE_INFINITY,otherTo=Double.NEGATIVE_INFINITY;
     double raise=Double.NEGATIVE_INFINITY,lower=Double.NEGATIVE_INFINITY,minDiff=Double.POSITIVE_INFINITY,maxDiff=Double.NEGATIVE_INFINITY;
-    double required=RoadInfrastructure.girderDepth(a)>0||RoadInfrastructure.girderDepth(b)>0||fascia(a)||fascia(b)?4.25:REQUIRED;
+    double required=RoadInfrastructure.customBridge(a)||RoadInfrastructure.customBridge(b)||fascia(a)||fascia(b)?4.25:REQUIRED;
     V ours=null,other=null;int negative=0,positive=0;
     for(int i=0;i<n;i+=3){
       double x=polygon[i],z=polygon[i+2];double ya=t.height(x,z),yb=q.height(x,z),difference=ya-yb;

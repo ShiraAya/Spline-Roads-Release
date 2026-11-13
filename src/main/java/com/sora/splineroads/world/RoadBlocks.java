@@ -179,7 +179,7 @@ public final class RoadBlocks {
         if (Block.isShapeFullBlock(fill)) return Shapes.block();
       }
       RoadIndex i = index(w);
-      VoxelShape road = i == null ? Shapes.block() : i.shape(p);
+      VoxelShape road = i == null ? Shapes.block() : SidewalkBlockContact.collision(w,p,i,i.shape(p));
       // A retained proxy with no current geometry is empty, not an invisible cube.
       if (s.getValue(FILL) == Fill.NONE) return road;
       VoxelShape fill = s.getValue(FILL).state().getCollisionShape(w, p, c);

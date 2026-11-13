@@ -423,7 +423,7 @@ public final class RoadStructures {
   /** Shared by ordinary roads and elevated junction surfaces. */
   public static List<Part> supports(Mesh mesh,Ground ground,RoadFurniture.Phase phase){return supports(mesh,ground,phase,List.of());}
   private static List<Part> supports(Mesh mesh,Ground ground,RoadFurniture.Phase phase,Collection<Part> fixtures){
-    if(ground.sharedDeck())return List.of();
+    if(ground.sharedDeck()||!mesh.settings().options().infrastructure().supportsEnabled())return List.of();
     var gantries=new RoadSolidOverlap.Index(fixtures.stream().filter(RoadGantry::member).toList());
     java.util.function.Predicate<Part> blocked=p->ground.blocked(p)||gantries.intersects(p);
     var fixed=ground.fixedSupports();if(fixed!=null){for(var part:fixed)if(blocked.test(part))throw new IllegalArgumentException("原桥墩与新的通行区冲突，请先调整相关道路");return fixed;}
@@ -433,6 +433,9 @@ public final class RoadStructures {
     for (double target = phase.first(12, PIER_SPACING); target < mesh.length() - 1e-6;
         target += PIER_SPACING) {
       if(RailbedBridges.customAt(mesh,target))continue;
+      // A local missing foundation does not make the whole cross section a bridge.
+      // Only search piers where the usable deck is actually elevated.
+      if(!elevated(mesh,sample(mesh,target),ground))continue;
       var shared=ground.sharedSupports(mesh,sample(mesh,target),.9,1.8,sample(mesh,target).halfWidth()*.62);
       if(shared!=null){out.addAll(shared);occupied.add(target);previous=target;continue;}
       boolean placed=false;
@@ -441,6 +444,7 @@ public final class RoadStructures {
         double d = target + shift;
         if (d < 0 || d >= mesh.length() || d - previous < 10) continue;
         Sample s = sample(mesh, d);
+        if(!elevated(mesh,s,ground))continue;
         boolean negative=RoadStreetscape.raised(mesh,s,-1),positive=RoadStreetscape.raised(mesh,s,1);
         boolean halfBridge=mesh.settings().structure()==Structure.AUTO&&negative!=positive&&!LaneDeck.hasOpenings(mesh);
         var bearing=halfBridge?new Sample(s.at((positive?1:-1)*s.halfWidth()/2,0),s.left(),s.distance(),s.halfWidth()/2):s;
@@ -643,6 +647,7 @@ public final class RoadStructures {
     if(run.isEmpty())return;
     double length=run.stream().mapToDouble(r->r.a.distance(r.b)).sum();
     if(modern && mesh.settings().style()!=Style.UNMARKED && !LaneDeck.hasOpenings(mesh) && mesh.settings().options().lanePoints().link()==null && mesh.settings().options().lanePoints().openings().isEmpty() && mesh.length()>8 && length<3
+        && run.get(0).distance()>1e-5 && run.get(run.size()-1).endDistance()<mesh.length()-1e-5
         && mesh.settings().options().outerRail()==RoadProfile.OuterRail.AUTO)return;
     if(modern&&mesh.settings().options().outerRail().sound(side)){
       var ordinary=new ArrayList<RailSpan>();
@@ -791,17 +796,39 @@ public final class RoadStructures {
   public static boolean elevated(Mesh mesh,Sample at,Ground ground,int side){
     if(mesh.settings().structure()==Structure.BRIDGE)return true;
     if(mesh.settings().structure()==Structure.GROUND||mesh.settings().structure()==Structure.TUNNEL)return false;
-    // Longitudinal voting filters marker holes. Inspect each half separately: a bank
-    // under the opposite carriageway must not classify an overhanging deck as ground.
-    double threshold=GROUND_CONTACT;int raisedRows=0;
-    for(double step:new double[]{-.8,0,.8}){
-      var sample=sample(mesh,Math.max(0,Math.min(mesh.length(),at.distance()+step)));boolean raised=false;
-      {int missing=0;for(double fraction:new double[]{.35,.65,.9}){
-        V p=sample.at(side*sample.halfWidth()*fraction,0);double top=ground.top(p.x(),p.z(),p.y());
-        if(!Double.isFinite(top)||p.y()-top>threshold)missing++;
-      }if(missing>=2)raised=true;}if(raised)raisedRows++;
+    if(!raisedRows(mesh,at,ground,side))return false;
+    // A short trench crossing the complete deck is a real opening, even when
+    // it is only two blocks long. Keep this separate from an isolated side pit.
+    if(raisedRows(mesh,at,ground,-side))return true;
+    // Narrow roads and single-track beds can put two transverse probes in one
+    // small pit. A one-sided bridge must continue along that side, not merely
+    // share the same 1-2 block void with neighbouring sample rows.
+    if(!raisedRow(at,ground,side))return false;
+    double continuous=0,required=Math.min(3,mesh.length());
+    for(int direction:new int[]{-1,1}){
+      double previous=at.distance();
+      for(double step=.5;step<=3;step+=.5){
+        double station=Math.max(0,Math.min(mesh.length(),at.distance()+direction*step));
+        if(station==previous||!raisedRow(sample(mesh,station),ground,side))break;
+        continuous+=Math.abs(station-previous);if(continuous>=required-1e-7)return true;
+        previous=station;
+      }
     }
-    return raisedRows>=2;
+    return false;
+  }
+  private static boolean raisedRows(Mesh mesh,Sample at,Ground ground,int side){
+    int raised=0;
+    for(double step:new double[]{-.8,0,.8})
+      if(raisedRow(sample(mesh,Math.max(0,Math.min(mesh.length(),at.distance()+step))),ground,side))raised++;
+    return raised>=2;
+  }
+  private static boolean raisedRow(Sample at,Ground ground,int side){
+    int missing=0;
+    for(double fraction:new double[]{.35,.65,.9}){
+      V p=at.at(side*at.halfWidth()*fraction,0);double top=ground.top(p.x(),p.z(),p.y());
+      if(!Double.isFinite(top)||p.y()-top>GROUND_CONTACT)missing++;
+    }
+    return missing>=2;
   }
 
   /** The entire shaft plus its vehicle margin must fit within an uninterrupted lower median. */

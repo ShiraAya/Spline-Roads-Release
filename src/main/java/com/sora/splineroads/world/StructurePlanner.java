@@ -153,6 +153,12 @@ final class StructurePlanner {
     // slabs independently so lamp arms/posts cannot tunnel through an upper walkway.
     var sidewalkSolids=new RoadPavingSupport(obstacles.stream().flatMap(r->r.record.structures().stream())
         .filter(p->p.material().name().startsWith("WALK_")).toList());
+    // Keep the owning road identity for the narrow joined-floor exception.
+    // Unrelated sidewalks and any material above their walking surface remain obstacles.
+    var joinedPaving=new IdentityHashMap<RoadStructures.Part,Mesh>();
+    for(var other:obstacles)if(RoadInteractions.connected(built.record,other.record)
+        ||LaneMerge.linkedTo(built.mesh,other.mesh)||LaneMerge.linkedTo(other.mesh,built.mesh))
+      for(var part:other.record.structures())if(part.material().name().startsWith("WALK_"))joinedPaving.put(part,other.mesh);
     // Piers may stand outside their owning road's deck bounds and record endpoints
     // are not reliable geometric identity. Check their actual local shaft positions.
     var pierSpacing=new RoadPierSpacing(obstacles.stream().flatMap(r->r.record.structures().stream()).toList());
@@ -192,6 +198,7 @@ final class StructurePlanner {
       catch(IllegalArgumentException e){throw new LaneRamps.CandidateRejected(e.getMessage());}
     var signNeighbors=new ArrayList<>(lookup.near(built.mesh,100,built.record.id()));signNeighbors.add(built);
     var signSight=gantrySlot==null?JunctionSignRoads.lampClearance(signNeighbors):(java.util.function.Predicate<V>)(p->false);
+    var signInstallations=new RoadSolidOverlap.Index(gantrySlot==null?JunctionSignRoads.installationParts(signNeighbors):List.of());
     final RoadRecord builtRecord=built.record;
     var missingSupports=new ArrayList<String>();
     // The lamp's under-deck bracket intentionally joins the slab. Only the
@@ -204,7 +211,7 @@ final class StructurePlanner {
               public List<RoadStructures.Part> sharedSupports(Mesh mesh,Sample at,double depth,double width,double offset){
                 return MultiLevelBridges.supports(mesh,lowerDecks,at,mesh.settings().thickness(),depth,width,offset,this);
               }
-              public List<RoadStructures.Part> fixedSupports(){return builtRecord.fragment()==null?null:builtRecord.fragment().supports();}
+              public List<RoadStructures.Part> fixedSupports(){return !builtRecord.settings().options().infrastructure().supportsEnabled()?List.of():builtRecord.fragment()==null?null:builtRecord.fragment().supports();}
               public boolean requiredGantry(RoadGantry.Station station){return lookup.requiredGantry(builtRecord.id(),station.slot());}
               public List<RoadStructures.Part> preservedGantry(RoadGantry.Station station){return lookup.preservedGantry(builtRecord.id(),station);}
               public void missingSupport(double station,String reason){missingSupports.add(String.format(Locale.ROOT,"%.2f: %s",station,reason));}
@@ -265,7 +272,7 @@ final class StructurePlanner {
               public boolean blocked(RoadStructures.Part part) {
                 return blocked(part,null,null,null);
               }
-              public boolean plantBlocked(RoadStructures.Part part,Sample mount){return treeObstacles.intersects(part)||ownBridge.intersects(part)||blocked(part,null,null,mount);}
+              public boolean plantBlocked(RoadStructures.Part part,Sample mount){return signInstallations.intersects(part)||treeObstacles.intersects(part)||ownBridge.intersects(part)||blocked(part,null,null,mount);}
               public boolean lampBlocked(RoadStructures.Part part,Sample mount){return ownBridge.intersects(part)||blocked(part,null,null,mount);}
               public boolean gantryMountConflict(RoadStructures.Part part,RoadGantry.Station station){
                 if(!RoadGantryMounts.foot(part)||gantryObstacles.intersects(part)||pierSpacing.tooClose(part)
@@ -297,7 +304,11 @@ final class StructurePlanner {
                     ||part.pier()&&!RoadGantry.member(part)&&gantrySolids.intersects(part))return true;
                 if(pierSpacing.tooClose(part))return true;
                 if(part.pier()&&part.material()==RoadStructures.Material.CONCRETE&&cycleExcavation.intersects(part))return true;
-                if(!RoadSidewalks.smoothPart(part)&&sidewalkSolids.blocks(part))return true;
+                if(!RoadSidewalks.smoothPart(part)&&sidewalkSolids.blocks(part,paving->{
+                  var joining=joinedPaving.get(paving);
+                  return joining!=null&&RoadClearance.joiningFloor(part,built.mesh,joining)
+                      &&RoadClearance.belowSurface(part,built.mesh,.025);
+                }))return true;
                 if(builtRecord.settings().options().railbed().active()&&part.model().startsWith("sr:catenary")?railwayAir.intersects(part):lampMount==null?(RoadGantryMounts.foot(part)?RoadGantryMounts.blockedByRoad(part,built.mesh,4.25):RoadInteractions.selfSupportBlocked(part,built.mesh)):RoadStreetscape.lampOwnRoadBlocked(part,built.mesh,lampMount))return true;
                 // Rails use the exact deck opening test above. The pier's vehicle-clearance
                 // envelope would otherwise erase rails for several blocks around every seam.
@@ -362,7 +373,7 @@ final class StructurePlanner {
     }
     if(stage==Stage.FIXED){
       var fixed=new ArrayList<RoadStructures.Part>();
-      if(built.record.fragment()!=null)fixed.addAll(built.record.fragment().supports());
+      if(built.record.fragment()!=null&&built.record.settings().options().infrastructure().supportsEnabled())fixed.addAll(built.record.fragment().supports());
       if(built.record.junction()!=null)fixed.addAll(built.record.junction().get().structures());
       else if(built.record.toll()!=null)fixed.addAll(built.record.tollPlan().structures());
       else fixed.addAll(RoadInfrastructure.fixedBridgeParts(built.mesh,ground));

@@ -45,7 +45,8 @@ public final class RoadSplitter {
     V point=new V(eye.x,eye.y,eye.z);double lateral=Math.max(-sample.halfWidth(),Math.min(sample.halfWidth(),point.sub(sample.center()).dot(sample.left())));
     if(sample.at(lateral,0).distance(point)>64)throw new IllegalArgumentException("已离开分割点的操作范围，请重新选择");
   }
-  static Plan plan(ServerLevel level,ServerPlayer player,RoadRecord road,double station,RoadSlicing.Connection mode){
+  static Plan plan(ServerLevel level,ServerPlayer player,RoadRecord road,double station,RoadSlicing.Connection mode){return plan(level,player,road,station,mode,null);}
+  static Plan plan(ServerLevel level,ServerPlayer player,RoadRecord road,double station,RoadSlicing.Connection mode,UUID junctionSource){
     var data=RoadData.get(level);if(player!=null)RoadData.requireOwner(player,road.owner());var pair=RoadSplitGeometry.split(road,station,mode,UUID.randomUUID());
     var occupied=new ArrayList<RoadSplitGeometry.Range>();boolean managedSource=false;
     for(var descriptor:data.interchanges.values()){
@@ -75,6 +76,7 @@ public final class RoadSplitter {
     var owners=new HashMap<Integer,UUID>();for(var r:List.of(first,second))for(int slot:RoadGantry.slots(r.mesh()))owners.put(slot,r.id());
     for(var state:data.smartSigns.road(road.id()))if(!owners.containsKey(state.key().slot()))throw new IllegalArgumentException("原标牌缺少可迁移的龙门架站位");
     var nodeTag=new CompoundTag();nodeTag.putUUID("Owner",road.owner());nodeTag.put("Node",RoadRecord.writeNode(pair.node()));nodeTag.putBoolean("HeightExplicit",true);nodeTag.putBoolean("HeadingLocked",true);nodeTag.putBoolean("GradeLocked",true);
+    if(junctionSource!=null)nodeTag.putUUID("JunctionSource",junctionSource);
     var moves=new RoadData.NodeMove(null,pair.pos(),pair.node(),nodeTag);var removed=new HashSet<>(replacement.keySet());removed.retainAll(data.index.roads.keySet());
     var roads=mode==RoadSlicing.Connection.JUNCTION?data.splitJunctionStructures(level,List.copyOf(replacement.values()),road.id()):List.copyOf(replacement.values());var built=roads.stream().map(RoadIndex.Built::new).toList();
     // The encoded batch must fit before the first world write, including all manual text.

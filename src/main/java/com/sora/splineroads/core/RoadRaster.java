@@ -129,6 +129,30 @@ public final class RoadRaster {
       return result;
     }
 
+    /** Exact local top faces for block-footway contact, not rounded collision boxes. */
+    public List<List<V>> structureTops(Cell cell,java.util.function.Predicate<RoadStructures.Part> match){
+      var result=new ArrayList<List<V>>();
+      for(var part:furniture.getOrDefault(key(Math.floorDiv(cell.x(),4),Math.floorDiv(cell.z(),4)),List.of())){
+        if(!match.test(part))continue;var face=part.top();
+        for(int i=1;i<face.size()-1;i++)result.add(List.of(face.get(0),face.get(i),face.get(i+1)));
+      }
+      return result;
+    }
+
+    /** Exact top below an infill cap; collider raster boxes round sloped tops upward. */
+    public double minimumStructureTop(Cell cell,java.util.function.Predicate<RoadStructures.Part> match){
+      var square=List.of(new V(cell.x(),0,cell.z()),new V(cell.x()+1,0,cell.z()),new V(cell.x()+1,0,cell.z()+1),new V(cell.x(),0,cell.z()+1));
+      double top=Double.POSITIVE_INFINITY;
+      for(var part:furniture.getOrDefault(key(Math.floorDiv(cell.x(),4),Math.floorDiv(cell.z(),4)),List.of())){
+        if(!match.test(part))continue;var face=part.top();
+        for(int i=1;i<face.size()-1;i++){
+          var clipped=RoadSurface.intersect(List.of(face.get(0),face.get(i),face.get(i+1)),square);
+          if(clipped.isEmpty())continue;double low=clipped.stream().mapToDouble(V::y).min().orElseThrow();
+          if(low>cell.y()+1e-7&&low<cell.y()+1-1e-7)top=Math.min(top,low);
+        }
+      }return top;
+    }
+
     public boolean structureAt(Cell cell,java.util.function.Predicate<RoadStructures.Part> match) {
       for(var part:furniture.getOrDefault(key(Math.floorDiv(cell.x(),4),Math.floorDiv(cell.z(),4)),List.of()))
         if(match.test(part)&&!structures(List.of(part),cell).isEmpty())return true;

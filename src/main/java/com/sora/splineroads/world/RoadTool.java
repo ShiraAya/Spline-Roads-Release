@@ -20,7 +20,7 @@ public final class RoadTool extends Item {
   public static Consumer<CompoundTag> openClient = t -> {};
 
   public static boolean showsNodes(ItemStack stack) {
-    return stack.getItem() instanceof LanePointTool || stack.getItem() instanceof LaneRampTool || stack.getItem() instanceof ElevatedPointTool || stack.getItem() instanceof AttachedPointTool
+    return stack.getItem() instanceof JunctionPointTool || stack.getItem() instanceof LanePointTool || stack.getItem() instanceof LaneRampTool || stack.getItem() instanceof ElevatedPointTool || stack.getItem() instanceof AttachedPointTool
         || stack.getItem() instanceof LaneLineTool
         || stack.getItem() instanceof RoadTool
         || stack.getItem() instanceof RoadSplitTool
@@ -118,6 +118,7 @@ public final class RoadTool extends Item {
           BlockPos a = BlockPos.of(tool.getLong("Start"));
           if (a.equals(pos)) throw new IllegalArgumentException("请选另一个端点；Shift＋右键空气清除选择");
           NodeEntity first = RoadData.requireNode(level, a, player);
+          JunctionPointTool.requireDifferent(level,a,pos);
           if(TollRoads.reverseConnection(RoadData.get(level),a,pos)){
             BlockPos swap=a;a=pos;pos=swap;NodeEntity swapNode=first;first=node;node=swapNode;
             tool.putLong("Start",a.asLong());
@@ -149,7 +150,7 @@ public final class RoadTool extends Item {
             width = data.inheritedWidth(a, pos, width, null);
           Settings settings =
               new Settings(
-                      ManualPlanner.inSession()&&CurveControlNodes.controls(tool).isEmpty()?Mode.STRAIGHT:Mode.AUTO,
+                      ManualPlanner.inSession()&&CurveControlNodes.controls(tool).isEmpty()&&!data.linked(a)&&!data.linked(pos)?Mode.STRAIGHT:Mode.AUTO,
                       choice,
                       width,
                       saved.thickness(),
@@ -265,6 +266,7 @@ public final class RoadTool extends Item {
     try (var workChunks = RoadWorkChunks.open(player.serverLevel())) {
       var level = player.serverLevel();
       RoadData.requireOwner(player, road.owner());
+      var mixed=JunctionPointConnections.group(RoadData.get(level),road.id());if(mixed!=null){var t=JunctionPointConnections.payload(level,player,mixed);if(!deletion)t=SideRoads.payload(t);t.putBoolean("DeleteOnly",deletion);reply.accept(t);return;}
       if(road.junction()!=null&&road.junction().spec().oneSide()!=null){var t=OneSidedJunctions.payload(level,player,road.assembly());if(!deletion)t=SideRoads.payload(t);t.putBoolean("DeleteOnly",deletion);reply.accept(t);return;}
       if(road.toll()!=null){var t=TollRoads.payload(level,player,new long[0],road.id());t.putBoolean("DeleteOnly",deletion);reply.accept(t);return;}
       if (road.junction() != null && deletion && road.junction().get().arm()>=0) {
@@ -277,7 +279,7 @@ public final class RoadTool extends Item {
       }
       if(road.junction()!=null&&!deletion){
         var logical=JunctionRoads.logical(RoadData.get(level),road);
-        if(logical!=null)road=logical;
+        if(logical!=null){road=logical;var owner=JunctionPointConnections.group(RoadData.get(level),road.id());if(owner!=null){reply.accept(SideRoads.payload(JunctionPointConnections.payload(level,player,owner)));return;}}
         else {reply.accept(JunctionRoads.payload(level,player,road));return;}
       }
       if (road.junction() != null) {
@@ -300,6 +302,7 @@ public final class RoadTool extends Item {
       if(road.assembly()!=null&&RoadData.get(level).interchanges.getOrDefault(road.assembly(),new CompoundTag()).getBoolean("YJunction"))throw new IllegalArgumentException("请用普通路口编辑器右键此 Y 字路口");
       if (road.assembly() != null) throw new IllegalArgumentException("此路段属于自动立交，请用立交连接器右键整体编辑");
 
+      road=road.localCurveForEditing();
       CompoundTag t = new CompoundTag();
       t.putBoolean("DeleteOnly", deletion);
 

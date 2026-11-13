@@ -10,12 +10,32 @@ public final class InterchangeFit {
     return fit(original,a,b,options,null);
   }
   public static InterchangePlanner.Plan fit(Node[] original,Settings a,Settings b,InterchangePlanner.Options options,java.util.function.UnaryOperator<V> conformance){
+    return refining(refinement->fit(original,a,b,options,conformance,refinement));
+  }
+  /** One optional budget starts only when the first complete valid plan exists. */
+  static final class Refinement implements AutoCloseable {
+    InterchangePlanner.Plan best;private RoadPlanningBudget budget;
+    InterchangePlanner.Plan keep(InterchangePlanner.Plan plan){
+      best=plan;if(budget==null)budget=RoadPlanningBudget.open("立交有效方案端点收紧",3);return plan;
+    }
+    @Override public void close(){if(budget!=null)budget.close();}
+  }
+  static InterchangePlanner.Plan refining(java.util.function.Function<Refinement,InterchangePlanner.Plan> work){
+    var refinement=new Refinement();
+    try(refinement){return work.apply(refinement);}
+    catch(RoadPlanningBudget.Expired expired){
+      // The local scope has closed: outer timeout/cancellation must still propagate.
+      RoadPlanningBudget.check();if(refinement.best!=null)return refinement.best;throw expired;
+    }
+  }
+  private static InterchangePlanner.Plan fit(Node[] original,Settings a,Settings b,InterchangePlanner.Options options,
+      java.util.function.UnaryOperator<V> conformance,Refinement refinement){
     RoadPlanningBudget.check();
     var fixed = options.adjust(false);
     IllegalArgumentException initial = new IllegalArgumentException("未找到符合净空、坡度和半径的布局");
     InterchangePlanner.Plan fallback = null;
     try {
-      var originalPlan = InterchangePlanner.plan(original, a, b, fixed,conformance);
+      var originalPlan = refinement.keep(InterchangePlanner.plan(original, a, b, fixed,conformance));
       if (!options.allowShrink()) return originalPlan;
       fallback = originalPlan;
     } catch (IllegalArgumentException e) {
@@ -41,14 +61,15 @@ public final class InterchangeFit {
     for (int i = 0; i < leveled.length; i++) {
       RoadPlanningBudget.check();
       V p = original[i].position();
-      double y = (i < 2) == abUpper ? upper : bottom;
+      if((i<2)!=abUpper){leveled[i]=original[i];continue;}
+      double y = upper;
       // A single horizontal elevation per axis, bounded against every original endpoint.
       for (int j = i < 2 ? 0 : 2; j < Math.min(original.length, i < 2 ? 2 : 4); j++)
         y = Math.max(y, original[j].position().y() - allowedDrop);
       leveled[i] = new Node(new V(p.x(), y, p.z()), original[i].yaw(), 0);
     }
     if(!Arrays.equals(original,leveled))try {
-      var leveledPlan = InterchangePlanner.plan(leveled, a, b, fixed,conformance);
+      var leveledPlan = refinement.keep(InterchangePlanner.plan(leveled, a, b, fixed,conformance));
       if (!options.allowShrink()) return leveledPlan;
       fallback = leveledPlan;
     } catch (IllegalArgumentException failure) {
@@ -59,8 +80,8 @@ public final class InterchangeFit {
     for (Node node : leveled)
       shortest = Math.min(shortest, node.position().sub(center).horizontalLength());
     if(fixed.preset()==InterchangePlanner.Preset.DOUBLE_TRUMPET){
-      var local=doubleTrumpet(leveled,center,a,b,fixed,conformance,options.allowShrink());
-      if(local!=null)return local;
+      var local=doubleTrumpet(leveled,center,a,b,fixed,conformance,options.allowShrink(),refinement);
+      if(local!=null)return restoreThroughEnds(local,leveled,center,a,b,fixed,conformance,refinement);
     }
     double failed = options.allowShrink() ? 45 : Math.max(45, shortest), target = failed;
     double limit = fixed.preset() == InterchangePlanner.Preset.DOUBLE_TRUMPET ? 2048 : 1024;
@@ -70,8 +91,8 @@ public final class InterchangeFit {
       target = Math.min(limit, Math.ceil(Math.max(target + 16, target * 1.18) / 4) * 4);
       try {
         best =
-            InterchangePlanner.plan(
-                extend(leveled, center, target, options.allowShrink()), a, b, fixed,conformance);
+            refinement.keep(InterchangePlanner.plan(
+                extend(leveled, center, target, options.allowShrink()), a, b, fixed,conformance));
         break;
       } catch (IllegalArgumentException failure) {
         initial = failure;
@@ -93,32 +114,31 @@ public final class InterchangeFit {
       if (mid >= target) break;
       try {
         var result =
-            InterchangePlanner.plan(
-                extend(leveled, center, mid, options.allowShrink()), a, b, fixed,conformance);
+            refinement.keep(InterchangePlanner.plan(
+                extend(leveled, center, mid, options.allowShrink()), a, b, fixed,conformance));
         best = result;
         target = mid;
       } catch (IllegalArgumentException ignored) {
         failed = mid;
       }
     }
-    if(fixed.preset()==InterchangePlanner.Preset.DOUBLE_TRUMPET)
-      best=restoreThroughEnds(best,leveled,center,a,b,fixed,conformance);
+    best=restoreThroughEnds(best,leveled,center,a,b,fixed,conformance,refinement);
     return best;
   }
 
   private static InterchangePlanner.Plan doubleTrumpet(Node[] nodes,V center,Settings a,Settings b,
-      InterchangePlanner.Options fixed,java.util.function.UnaryOperator<V> conformance,boolean shrink){
+      InterchangePlanner.Options fixed,java.util.function.UnaryOperator<V> conformance,boolean shrink,Refinement refinement){
     double failed=shrink?45:Math.max(45,Math.min(nodes[0].position().sub(center).horizontalLength(),nodes[2].position().sub(center).horizontalLength())),target=failed;
     InterchangePlanner.Plan best=null;
     for(int attempt=0;attempt<20&&target<2048;attempt++){
       RoadPlanningBudget.check();target=Math.min(2048,Math.ceil(Math.max(target+16,target*1.18)/4)*4);
-      try{best=InterchangePlanner.plan(trumpetEnds(nodes,center,target,shrink),a,b,fixed,conformance);break;}
+      try{best=refinement.keep(InterchangePlanner.plan(trumpetEnds(nodes,center,target,shrink),a,b,fixed,conformance));break;}
       catch(IllegalArgumentException rejected){failed=target;}
     }
     if(best==null)return null;
     for(int i=0;i<8&&target-failed>4;i++){
       RoadPlanningBudget.check();double mid=Math.ceil((target+failed)/8)*4;if(mid>=target)break;
-      try{best=InterchangePlanner.plan(trumpetEnds(nodes,center,mid,shrink),a,b,fixed,conformance);target=mid;}
+      try{best=refinement.keep(InterchangePlanner.plan(trumpetEnds(nodes,center,mid,shrink),a,b,fixed,conformance));target=mid;}
       catch(IllegalArgumentException rejected){failed=mid;}
     }
     return best;
@@ -132,13 +152,13 @@ public final class InterchangeFit {
     return out;
   }
   private static InterchangePlanner.Plan restoreThroughEnds(InterchangePlanner.Plan best,Node[] original,V center,
-      Settings a,Settings b,InterchangePlanner.Options fixed,java.util.function.UnaryOperator<V> conformance){
+      Settings a,Settings b,InterchangePlanner.Options fixed,java.util.function.UnaryOperator<V> conformance,Refinement refinement){
     // If a through end really needed room, retain only the extension which still
     // passes the same complete geometry checks; never impose visual symmetry.
-    for(int index:new int[]{1,3}){
+    for(int index=0;index<original.length;index++){
       if(best.anchors().get(index).position().sub(center).horizontalLength()<=original[index].position().sub(center).horizontalLength()+1e-7)continue;
       Node[] candidate=best.anchors().toArray(Node[]::new);candidate[index]=original[index];
-      try{best=InterchangePlanner.plan(candidate,a,b,fixed,conformance);continue;}
+      try{best=refinement.keep(InterchangePlanner.plan(candidate,a,b,fixed,conformance));continue;}
       catch(IllegalArgumentException rejected){}
       double low=original[index].position().sub(center).horizontalLength();
       double high=best.anchors().get(index).position().sub(center).horizontalLength();
@@ -147,7 +167,7 @@ public final class InterchangeFit {
         candidate=best.anchors().toArray(Node[]::new);
         V p=original[index].position(),delta=p.sub(center).horizontalUnit();
         V at=center.add(delta.mul(mid));candidate[index]=new Node(new V(at.x(),p.y(),at.z()),original[index].yaw(),0);
-        try{best=InterchangePlanner.plan(candidate,a,b,fixed,conformance);high=mid;}
+        try{best=refinement.keep(InterchangePlanner.plan(candidate,a,b,fixed,conformance));high=mid;}
         catch(IllegalArgumentException rejected){low=mid;}
       }
     }

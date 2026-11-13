@@ -143,7 +143,7 @@ public final class RoadIndex {
       return false;
     }
     private final Map<Long,Integer> tunnelEnds=bounded(2048);
-    private int clearEnd(Column c,long key) {
+    private synchronized int clearEnd(Column c,long key) {
       if(record.settings().structure()==Structure.TUNNEL) {
         var previous=tunnelEnds.get(key);if(previous!=null)return previous;
         var p=BlockPos.of(key);
@@ -193,7 +193,7 @@ public final class RoadIndex {
     public boolean rasterized(){return rasterized;}
 
     /** Point markers do not change the road ribbon, openings, furniture or collision. */
-    public Built lanePoints(LanePoints.Data value) {
+    public synchronized Built lanePoints(LanePoints.Data value) {
       var before = record.settings().options().lanePoints();
       if (!Objects.equals(before.link(), value.link()) || !before.openings().equals(value.openings())
           || !before.additions().equals(value.additions()) || !before.cuts().equals(value.cuts()) || !LaneMerge.sameDefinitions(before,value))
@@ -301,7 +301,7 @@ public final class RoadIndex {
       return value;
     }
 
-    public Column column(BlockPos pos) {
+    public synchronized Column column(BlockPos pos) {
       long key=BlockPos.asLong(pos.getX(),0,pos.getZ());
       if(rasterized)return columnData.get(key);
       if(nearbyColumns.containsKey(key))return nearbyColumns.get(key);
@@ -314,7 +314,7 @@ public final class RoadIndex {
     }
 
     /** Same clearance semantics as the full edit raster, evaluated at one touched column. */
-    public boolean clearanceAt(BlockPos p) {
+    public synchronized boolean clearanceAt(BlockPos p) {
       if(effectiveClearance()==0)return false;
       if(rasterized)return clearanceCells.contains(p.asLong());
       long key=BlockPos.asLong(p.getX(),0,p.getZ());Column c;
@@ -358,7 +358,9 @@ public final class RoadIndex {
       return value;
     }
 
-    public List<RoadRaster.Box> boxes(BlockPos pos) {
+    // Direct collision callers and index.shape share this lazy raster cache.
+    // Lock Built before touching the LRU; never acquire an LRU lock before Built.
+    public synchronized List<RoadRaster.Box> boxes(BlockPos pos) {
       if(rasterized)return cellData.getOrDefault(pos.asLong(),List.of());
       // Clients rasterize only cells actually queried by nearby collision/raycast operations.
       return nearbyCells.computeIfAbsent(
@@ -382,7 +384,7 @@ public final class RoadIndex {
   private RoadPlanningSnapshot planningSnapshot=RoadPlanningSnapshot.empty();
   RoadPlanningSnapshot planningSnapshot(){return planningSnapshot;}
   /** Rare rollback restores insertion order as well as object identities. */
-  void restoreOrder(Map<UUID,Built> ordered){
+  synchronized void restoreOrder(Map<UUID,Built> ordered){
     roads.clear();roads.putAll(ordered);var snapshot=RoadPlanningSnapshot.empty();
     if(!lazy)for(var built:roads.values())snapshot=snapshot.with(built);planningSnapshot=snapshot;
     if(pointIndex!=null)pointIndex.restore(roads.values());
@@ -429,7 +431,7 @@ public final class RoadIndex {
   }
 
   public java.util.function.Consumer<UUID> changed = id -> {};
-  public void put(Built built) {
+  public synchronized void put(Built built) {
     changed.accept(built.record.id());
     remove(built.record.id());
     revision++;contentRevision++;
@@ -446,7 +448,7 @@ public final class RoadIndex {
   }
 
   /** Preserve the spatial index, shape cache and render revision for point-only changes. */
-  public Built lanePoints(UUID id, LanePoints.Data value) {
+  public synchronized Built lanePoints(UUID id, LanePoints.Data value) {
     var previous = roads.get(id);
     if (previous == null) throw new IllegalArgumentException("道路已不存在");
     var next = previous.lanePoints(value);
@@ -455,7 +457,7 @@ public final class RoadIndex {
     return next;
   }
 
-  public Built remove(UUID id) {
+  public synchronized Built remove(UUID id) {
     Built old = roads.remove(id);
     if(old!=null&&pointIndex!=null)pointIndex.remove(id);
     if(old!=null&&!lazy)planningSnapshot=planningSnapshot.without(id);
@@ -556,7 +558,9 @@ public final class RoadIndex {
     return RoadChunkTraversal.trace(origin.x(),origin.z(),direction.x(),direction.z(),range);
   }
 
-  public VoxelShape shape(BlockPos pos) {
+  // Shape reads include access-order cache writes. Use the same monitor as index
+  // mutations so eviction, invalidation and candidate lookup remain one operation.
+  public synchronized VoxelShape shape(BlockPos pos) {
     long key = pos.asLong();
     return shapes.computeIfAbsent(
         key,
@@ -567,7 +571,7 @@ public final class RoadIndex {
         });
   }
 
-  public void clear() {
+  public synchronized void clear() {
     revision++;contentRevision++;
     roads.clear();
     if(pointIndex!=null)pointIndex.clear();

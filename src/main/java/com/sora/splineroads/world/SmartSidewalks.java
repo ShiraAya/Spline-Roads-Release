@@ -49,7 +49,7 @@ public final class SmartSidewalks {
       var p=BlockPos.of(e.getKey());var point=new com.sora.splineroads.core.RoadGeometry.V(p.getX()+.5,p.getY()+1,p.getZ()+.5);
       boolean affected=dirty.stream().anyMatch(r->{var q=RoadQueries.horizontal(r.mesh,point);return Math.abs(point.y()-q.sample().center().y())<2&&point.sub(q.sample().center()).horizontalLength()<=q.sample().halfWidth()+r.record.settings().options().sidewalk().width()+2;});
       boolean retained=unchanged.getOrDefault(net.minecraft.world.level.ChunkPos.asLong(p.getX()>>4,p.getZ()>>4),List.of()).stream().anyMatch(r->{
-        var c=r.record.settings().options().sidewalk();if(!c.enabled())return false;
+        var c=r.record.settings().options().sidewalk();if(!c.enabled()||r.record.settings().options().streetscape().apron()!=RoadStreetscape.Apron.ROAD)return false;
         var q=RoadQueries.horizontal(r.mesh,point);int side=q.lateral()<0?-1:1;
         if(c.side()==RoadSidewalks.Side.LEFT&&side>0||c.side()==RoadSidewalks.Side.RIGHT&&side<0)return false;
         double edge=q.sample().halfWidth()+RoadSidewalks.walkWidth(r.mesh,c,q.sample(),side);
@@ -58,7 +58,7 @@ public final class SmartSidewalks {
       if(retained||!affected&&roads.stream().anyMatch(r->ownsBorder(r,p)))result.putIfAbsent(e.getKey(),e.getValue());
     }
     var byChunk=new HashMap<Long,List<RoadIndex.Built>>();for(var r:roads)for(long chunk:r.chunks)byChunk.computeIfAbsent(chunk,k->new ArrayList<>()).add(r);
-    for(var r:edited){var c=r.record.settings().options().sidewalk();if(!c.enabled()||!c.smooth()||r.record.settings().structure()==com.sora.splineroads.core.RoadGeometry.Structure.TUNNEL)continue;
+    for(var r:edited){var c=r.record.settings().options().sidewalk();if(!c.enabled()||!c.smooth()||r.record.settings().options().streetscape().apron()!=RoadStreetscape.Apron.ROAD||r.record.settings().structure()==com.sora.splineroads.core.RoadGeometry.Structure.TUNNEL)continue;
       var paving=new RoadSidewalks.PavingAnchors(r.record.structures());
       // Extend the exact ribbon by one block, then keep only the outer ring.
       var expanded=new com.sora.splineroads.core.RoadGeometry.Mesh(r.mesh.samples().stream().map(s->new com.sora.splineroads.core.RoadGeometry.Sample(s.center(),s.left(),s.distance(),s.halfWidth()+c.width())).toList(),r.mesh.settings(),r.mesh.min(),r.mesh.max(),r.mesh.length(),r.mesh.closed());
@@ -75,7 +75,7 @@ public final class SmartSidewalks {
     }return result;
   }
   private static boolean ownsBorder(RoadIndex.Built road,BlockPos p){
-    var c=road.record.settings().options().sidewalk();if(!c.enabled())return false;
+    var c=road.record.settings().options().sidewalk();if(!c.enabled()||road.record.settings().options().streetscape().apron()!=RoadStreetscape.Apron.ROAD)return false;
     var point=new com.sora.splineroads.core.RoadGeometry.V(p.getX()+.5,p.getY()+1,p.getZ()+.5);
     var q=RoadQueries.horizontal(road.mesh,point);int side=q.lateral()<0?-1:1;
     if(c.side()==RoadSidewalks.Side.LEFT&&side>0||c.side()==RoadSidewalks.Side.RIGHT&&side<0)return false;

@@ -405,12 +405,15 @@ public final class AutoJunctions {
     for(int i=0;i<a.samples().size();i++){var x=a.samples().get(i);var y=b.samples().get(i);if(x.center().distance(y.center())>1e-7||x.left().distance(y.left())>1e-7||Math.abs(x.halfWidth()-y.halfWidth())>1e-7)return false;}
     return true;
   }
-  private record CommitInput(List<RoadIndex.Built> built,Set<UUID> removed,Set<BlockPos> selected,Map<UUID,CompoundTag> sideReceipts,Set<UUID> preservedSideHosts){
+  record CommitInput(List<RoadIndex.Built> built,Set<UUID> removed,Set<BlockPos> selected,Map<UUID,CompoundTag> sideReceipts,Set<UUID> preservedSideHosts){
     Set<UUID> editing(Set<UUID> selected){
       var direct=new HashSet<>(selected);direct.removeAll(preservedSideHosts);return direct;
     }
   }
   private static CommitInput commitInput(ServerLevel level,ServerPlayer player,CompoundTag before,Draft draft,List<RoadData.NodeMove> moves,Map<UUID,List<RoadRecord>> pieces){
+    return commitInput(level,player,before,draft,moves,pieces,Set.of());
+  }
+  private static CommitInput commitInput(ServerLevel level,ServerPlayer player,CompoundTag before,Draft draft,List<RoadData.NodeMove> moves,Map<UUID,List<RoadRecord>> pieces,Set<UUID> compositeRemoved){
     RoadData data=RoadData.get(level);Set<UUID> removed=new HashSet<>();for(var r:streets(before))removed.add(r.id());Set<UUID> oldGroups=new HashSet<>();for(var t:centers(before))oldGroups.add(t.getUUID("Id"));
     for(var r:data.index.roads.values())if(oldGroups.contains(r.record.assembly()))removed.add(r.record.id());
     for(var c:draft.centers())removed.addAll(borrowed(c));
@@ -420,7 +423,7 @@ public final class AutoJunctions {
     var built=new ArrayList<RoadIndex.Built>();for(var r:draft.roads())built.add(new RoadIndex.Built(AutoCrossings.remap(r,pieces)));
     for(var old:data.index.roads.values())if(!removed.contains(old.record.id())){var next=AutoCrossings.remap(old.record,pieces);if(next!=old.record){removed.add(next.id());built.add(new RoadIndex.Built(next));}}
     var preserved=new HashSet<UUID>();var sideReceipts=ConnectedSideJunctions.rebase(level,built,removed,preserved);
-    for(var r:built)for(var old:data.index.roads.values())if(!removed.contains(old.record.id())&&!RoadInteractions.deferredLaneContact(r.record,old.record)&&RoadIndex.overlapXZ(r.mesh,old.mesh,1))Interchanges.checkExternal(r.mesh,old.mesh,data.index.roads.containsKey(r.record.id())?data.index.roads.get(r.record.id()).mesh:null);
+    for(var r:built)for(var old:data.index.roads.values())if(!removed.contains(old.record.id())&&!compositeRemoved.contains(old.record.id())&&!RoadInteractions.deferredLaneContact(r.record,old.record)&&RoadIndex.overlapXZ(r.mesh,old.mesh,1))Interchanges.checkExternal(r.mesh,old.mesh,data.index.roads.containsKey(r.record.id())?data.index.roads.get(r.record.id()).mesh:null);
     return new CommitInput(built,removed,selected,sideReceipts,Set.copyOf(preserved));
   }
   private static void commitMetadata(RoadData data,CompoundTag before,Draft draft,Map<UUID,List<RoadRecord>> pieces){
@@ -446,6 +449,8 @@ public final class AutoJunctions {
   public static RoadRecord connect(ServerLevel level,ServerPlayer player,BlockPos a,BlockPos b,Settings settings,UUID id,boolean force,boolean levelEnds){return connect(level,player,a,b,settings,id,force,force,levelEnds);}
   public static RoadRecord connect(ServerLevel level,ServerPlayer player,BlockPos a,BlockPos b,Settings settings,UUID id,boolean forceA,boolean forceB,boolean levelEnds){return connect(level,player,a,b,settings,id,forceA,forceB,levelEnds,List.of());}
   public static RoadRecord connect(ServerLevel level,ServerPlayer player,BlockPos a,BlockPos b,Settings settings,UUID id,boolean forceA,boolean forceB,boolean levelEnds,List<BlockPos> controlNodes){
+    if(id==null)JunctionPointTool.requireDifferent(level,a,b);
+    else if(JunctionPointConnections.group(RoadData.get(level),id)!=null)throw new IllegalArgumentException("请使用附属点连接道路的整体编辑器");
     if(a.equals(b))throw new IllegalArgumentException("请选择两个不同的端点");
     if(Math.hypot((double)a.getX()-b.getX(),(double)a.getZ()-b.getZ())>RoadLimits.MAX_ENDPOINT_DISTANCE)throw new IllegalArgumentException("端点距离超过 2048 格");
     var data=RoadData.get(level);var na=RoadData.requireNode(level,a,player);var nb=RoadData.requireNode(level,b,player);CompoundTag graph=context(data,Set.of(a,b));var roads=streets(graph);var configs=centers(graph);
@@ -468,7 +473,27 @@ public final class AutoJunctions {
     var split=AutoCrossings.split(roads,next,hits,configs);var moves=new ArrayList<>(split.nodes());controlNodes.forEach(p->moves.add(RoadData.NodeMove.retire(p)));var edited=new HashSet<UUID>();edited.add(next.id());for(var pieces:split.pieces().values())pieces.forEach(r->edited.add(r.id()));
     Draft draft=plan(split.roads(),configs,graph);commit(level,player,graph,draft,moves,edited,Set.of(),split.pieces());var live=data.index.roads.get(next.id());return live==null?data.streets.get(next.id()):live.record;
   }
-  public static void removeStreet(ServerLevel level,ServerPlayer player,UUID id){var data=RoadData.get(level);var old=data.streets.get(id);if(old==null)throw new IllegalArgumentException("道路已不存在");if(player!=null)RoadData.requireOwner(player,old.owner());var graph=context(data,Set.of(old.a(),old.b()));var roads=streets(graph);roads.removeIf(r->r.id().equals(id));commit(level,player,graph,plan(roads,centers(graph),graph),List.of(),Set.of(id),Set.of());}
+  /** A virtual side-connection seam participates in the graph, never as a player node block. */
+  static StreetChange compositeStreet(ServerLevel level,ServerPlayer player,RoadRecord next){
+    var before=context(RoadData.get(level),Set.of(next.a(),next.b()));var roads=streets(before);
+    roads.removeIf(r->r.id().equals(next.id()));roads.add(next);var draft=plan(roads,centers(before),before);
+    StreetNetworkGeometry.checkGrades(draft.roads());return new StreetChange(before,draft,List.of(),Set.of(),next.id());
+  }
+  public static Draft previewComposite(CompoundTag before,RoadRecord next){var roads=streets(before);roads.removeIf(r->r.id().equals(next.id()));roads.add(next);return plan(roads,centers(before),before);}
+  static StreetChange withoutStreet(ServerLevel level,ServerPlayer player,UUID id){
+    var data=RoadData.get(level);var old=data.streets.get(id);if(old==null)throw new IllegalArgumentException("道路已不存在");if(player!=null)RoadData.requireOwner(player,old.owner());
+    var graph=context(data,Set.of(old.a(),old.b()));var roads=streets(graph);roads.removeIf(r->r.id().equals(id));var configs=centers(graph);
+    // A consumed marker returns to its original two continuous split siblings.
+    configs.removeIf(c->{var pos=BlockPos.of(c.getLong("CenterPos"));if(!(level.getBlockEntity(pos) instanceof NodeEntity node)||node.junctionSource==null||!c.getList("ConnectorArms",Tag.TAG_COMPOUND).isEmpty())return false;
+      var ends=roads.stream().filter(r->touches(r,pos)).toList();return ends.size()==2&&ends.stream().allMatch(r->r.fragment()!=null&&r.fragment().connection()==RoadSlicing.Connection.CONTINUOUS&&node.junctionSource.equals(r.fragment().source()));});
+    return new StreetChange(graph,plan(roads,configs,graph),List.of(),Set.of(),id);
+  }
+  static CommitInput compositeInput(ServerLevel level,ServerPlayer player,StreetChange change,Set<UUID> additionallyRemoved){return commitInput(level,player,change.before(),change.draft(),change.moves(),Map.of(),additionallyRemoved);}
+  static void compositeMetadata(RoadData data,StreetChange change,CommitInput input){commitMetadata(data,change.before(),change.draft(),Map.of());data.junctions.putAll(input.sideReceipts());}
+  public static void removeStreet(ServerLevel level,ServerPlayer player,UUID id){
+    UUID group=JunctionPointConnections.group(RoadData.get(level),id);if(group!=null){JunctionPointConnections.remove(level,player,group);return;}
+    var change=withoutStreet(level,player,id);commit(level,player,change.before(),change.draft(),List.of(),Set.of(id),Set.of());
+  }
   public static CompoundTag payload(ServerLevel level,ServerPlayer player,UUID id){var data=RoadData.get(level);var saved=data.junctions.get(id);if(saved==null)throw new IllegalArgumentException("路口已不存在");if(player!=null)RoadData.requireOwner(player,saved.getUUID("Owner"));var t=saved.copy();t.put("JunctionGraph",context(data,Set.of(BlockPos.of(t.getLong("CenterPos")))));LaneDeletes.junctionPayload(data,id,t);return t;}
   public static String edit(ServerLevel level,ServerPlayer player,CompoundTag command){var data=RoadData.get(level);var current=payload(level,player,command.getUUID("Id"));var graph=current.getCompound("JunctionGraph");var configs=centers(graph);var requested=JunctionCodec.read(command.getCompound("Spec"));
     var original=JunctionCodec.read(current.getCompound("Spec"));if(requested.kind()!=original.kind()||!requested.center().equals(original.center())||requested.arms().size()!=original.arms().size())throw new IllegalArgumentException("连接道路已变化，请重新打开路口");
@@ -480,6 +505,7 @@ public final class AutoJunctions {
     if(current.getBoolean("GeneratedRing")&&roads.stream().anyMatch(r->ports.contains(r.a().asLong())||ports.contains(r.b().asLong())))throw new IllegalArgumentException("请先删除环岛接出的道路，再删除环岛");
     if(current.getBoolean("GeneratedRing"))for(long point:ports){BlockPos pos=BlockPos.of(point);work.node(pos);if(level.getBlockEntity(pos) instanceof NodeEntity)RoadData.requireNode(level,pos,player);}
     if(roads.stream().anyMatch(r->r.assembly()!=null&&touches(r,center)))throw new IllegalArgumentException("此路口连接了道路组合；请用拆路器删除外接支路，组合道路会自动恢复");
+    if(roads.stream().anyMatch(r->touches(r,center)&&JunctionPointConnections.group(RoadData.get(level),r.id())!=null))throw new IllegalArgumentException("请先删除附属点连接道路，再删除路口中心");
     roads.removeIf(r->touches(r,center));var configs=centers(graph);configs.removeIf(t->t.getUUID("Id").equals(id));commit(level,player,graph,plan(roads,configs,graph),List.of(),Set.of(),Set.of(id));
     if(current.getBoolean("GeneratedRing"))for(long point:ports){BlockPos pos=BlockPos.of(point);if(!RoadData.get(level).linked(pos)&&level.getBlockEntity(pos) instanceof NodeEntity)level.removeBlock(pos,false);}
   }}

@@ -917,6 +917,16 @@ public final class InterchangePlanner {
           arms.set(i,arm.node(new Node(endpoint,arm.endpoint().yaw(),0),arm.inward(),arm.external()));}
       }
       spec=spec.arms(arms);
+      // Projection below is clamped to the selected mainline. Validate the real
+      // arm endpoints first, retaining a selectable straight road at both ends.
+      // Two blocks is the same minimum as an ordinary continuous source piece.
+      V mainStart=full.first().center(),mainDirection=full.last().center().sub(mainStart).horizontalUnit();
+      double mainLength=full.last().center().sub(mainStart).dot(mainDirection);
+      for(int i=0;i<2;i++){
+        double at=arms.get(i).endpoint().position().sub(mainStart).dot(mainDirection);
+        if(at<2-1e-6||at>mainLength-2+1e-6)
+          throw new IllegalArgumentException("路口引道与主路端点间须保留至少2格直路，请扩大 "+(cross==0?"A/B":"C/D")+" 范围");
+      }
       var plan=JunctionPlanner.plan(spec);
       for(int i=0;i<plan.pieces().size();i++)pieces.add(new Leg(options.preset==Preset.SPUI?"单点中心路口":"菱形端部路口",-1,-1,plan.pieces().get(i).mesh(),new JunctionPlanner.Ref(spec,i)));
       double a=RoadQueries.horizontal(full,arms.get(0).endpoint().position()).sample().distance(),b=RoadQueries.horizontal(full,arms.get(1).endpoint().position()).sample().distance();
@@ -1200,6 +1210,10 @@ public final class InterchangePlanner {
     } else if (right) {
       // Broad continuous inward bend. Existing radius, ribbon and clearance checks still
       // reject layouts that cut into a leaf; fitting enlarges the footprint when necessary.
+      middle = curve(List.of(new Knot(aa, tangentA), new Knot(bb, tangentB)), directCurve);
+    } else if (options.preset == Preset.STACK) {
+      // A stack flyover has one continuous turn. Returning to the unpeeled
+      // highway heading at intermediate knots introduced two reverse bends.
       middle = curve(List.of(new Knot(aa, tangentA), new Knot(bb, tangentB)), directCurve);
     } else if (options.preset == Preset.TURBINE || options.preset == Preset.Y) {
       double radius =
@@ -1511,6 +1525,19 @@ public final class InterchangePlanner {
       hi=Math.min(hi,Math.min(h0+a*RoadGrades.MAX_RAMP_GRADE,h1+b*RoadGrades.MAX_RAMP_GRADE));}
     return new double[]{lo,hi};
   }
+  /** Necessary height reachability before the more expensive ramp/ramp crossings.
+   * Rejecting here cannot create a valid plan: the same host bounds and local
+   * grade edges are a subset of the complete solver's constraints. */
+  static void checkLocalGradeBounds(double[] lower,double[] upper,int start,double[] distance){
+    double lo=lower[start],hi=upper[start];
+    for(int i=1;i<distance.length;i++){
+      if((i&255)==0)RoadPlanningBudget.check();
+      // Match the full graph's 1e-8 edge relaxation tolerance conservatively.
+      double reach=(RoadGrades.MAX_RAMP_GRADE-1e-6)*(distance[i]-distance[i-1])+1e-8;
+      lo=Math.max(lower[start+i],lo-reach);hi=Math.min(upper[start+i],hi+reach);
+      if(lo>hi+1e-7)throw new IllegalArgumentException("实际交叉处的净高与 15% 纵坡无法同时满足，请扩大范围");
+    }
+  }
   private List<Mesh> elevateCrossings(List<Mesh> flat) {
     int count=routes.size(),total=0;int[] offset=new int[count];double[][] distance=new double[count][];
     for(int r=0;r<count;r++){
@@ -1533,6 +1560,7 @@ public final class InterchangePlanner {
           edges.add(new InterchangeGradeProfile.Edge(start+i,start+i-1,-reach));}
       }
       for(int k=0;k<=roads.size()+ri;k++){
+        if(k==roads.size())checkLocalGradeBounds(lower,upper,start,d);
         Leg host=k<roads.size()?roads.get(k):null;int oi=k-roads.size();
         Route other=host==null?routes.get(oi):null;Mesh against=host==null?flat.get(oi):host.mesh();
         for(var detail:oi==ri?RoadClearance.detailedSelfContacts(flat.get(ri),options.width()*2):RoadClearance.detailedContacts(flat.get(ri),against)){

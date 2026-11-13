@@ -24,7 +24,10 @@ public final class ElevatedSigns {
                 : side*(at.halfWidth()+(host.settings().options().sidewalk().enabled()?.60:-.22));
         V right=at.left().mul(flow);
         double inner=layout.catalog().twoWay()?layout.medianCenter():layout.outer(-side)-side*.55;
-        return new Support(at.at(offset,-.42),right,right.left(),paired,-side*flow,(inner-offset)*flow);
+        var lane=LaneSections.live(host,station).lanes().stream().filter(l->l.sign()==flow)
+            .min(Comparator.comparingDouble(l->side*l.position().sub(at.center()).dot(at.left()))).orElseThrow();
+        double boardCenter=lane.position().sub(at.at(offset,0)).dot(right);
+        return new Support(at.at(offset,-.42),right,right.left(),paired,-side*flow,(inner-offset)*flow,paired?null:boardCenter);
     }
     public static Support saved(Mesh host,ElevatedAccess.Reservation access,List<Part> structures){
         var exit=access.cuts().stream().filter(c->!c.arrival()).findFirst().orElse(null);
@@ -36,7 +39,7 @@ public final class ElevatedSigns {
             if(hasSeat(seats,seat(mount,mount.gantrySpan()))&&hasSeat(seats,seat(mount,0)))return mount;
             // Old two-post seats stood on the carriageway side of a rail median.
             var oldGantry=new Support(mount.foot(),mount.right(),mount.front(),mount.paired(),mount.cantileverSide(),
-                mount.gantrySpan()-mount.cantileverSide()*.58);
+                mount.gantrySpan()-mount.cantileverSide()*.58,mount.boardCenter());
             if(hasSeat(seats,seat(oldGantry,oldGantry.gantrySpan()))&&hasSeat(seats,seat(oldGantry,0)))return oldGantry;
             var legacy=new Support(mount.foot(),mount.right(),mount.front(),mount.paired(),mount.cantileverSide());
             if(hasSeat(seats,seat(legacy,0)))return legacy;

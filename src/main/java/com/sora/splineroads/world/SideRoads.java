@@ -16,10 +16,10 @@ public final class SideRoads {
     t.put("EndNode",RoadRecord.writeNode(new Node(spec.center(),RoadPlanner.yaw(arm.inward()),0)));
     return t;
   }
-  public static int signature(CompoundTag t){return Objects.hash(t.getCompound("Spec"),t.getCompound("PairSpec"),t.getInt("MainSignature"),t.getInt("MainSignatureB"),t.getInt("BranchSignature"));}
+  public static int signature(CompoundTag t){return Objects.hash(t.getCompound("Spec"),t.getCompound("PairSpec"),t.getInt("MainSignature"),t.getInt("MainSignatureB"),t.getInt("BranchSignature"),t.getInt("MarkerSignature"));}
   public static CompoundTag action(CompoundTag draft){
     var t=new CompoundTag();
-    for(String key:List.of("Id","Main","AttachedPoint","Branch","MainFirst","Paired","MainB","AttachedPointB","Fallback","MainSignature","MainSignatureB","BranchSignature","Signature","Settings"))
+    for(String key:List.of("Id","Main","AttachedPoint","Branch","MainFirst","Paired","MainB","AttachedPointB","Fallback","MainSignature","MainSignatureB","BranchSignature","Signature","Settings","MixedMarker","Marker","MixedLink","MarkerSignature"))
       if(draft.contains(key))t.put(key,draft.get(key).copy());
     t.putString("Action","junctionSideRoad");return t;
   }

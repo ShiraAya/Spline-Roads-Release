@@ -10,6 +10,26 @@ import java.util.*;
 final class JunctionSignRoads {
   private record Location(Mesh mesh,Sample sample,int flow,boolean approach){}
   private record Placement(Location location,Support support,boolean medianFlip){}
+  /** Exact saved sign mast and board envelopes, using the same placement as
+   * derive(). Plant generation reserves these solids before deciding its group. */
+  static List<RoadStructures.Part> installationParts(List<RoadIndex.Built> roads){
+    var parts=new ArrayList<RoadStructures.Part>();
+    for(var owner:roads){var ref=owner.record.junction();if(ref==null||ref.get().arm()<0)continue;
+      var arm=ref.spec().arms().get(ref.get().arm());if(arm.incoming()==0)continue;
+      for(int slot=0;slot<2;slot++){
+        if(!arm.signEnabled(slot))continue;
+        var at=placement(owner,slot,p->roads,new HashSet<>());
+        var branches=slot==0&&at.medianFlip()?List.of(new Branch("__median__",List.of(),0,true,List.of())):List.<Branch>of();
+        var state=State.empty(new Key(owner.record.id(),slot,1))
+            .layout(slot==0?Mode.JUNCTION_ADVANCE:Mode.ROAD_NAME,owner.record.id(),branches,"")
+            .supported(at.support());
+        // Junction panels have fixed dimensions; the median branch records
+        // the only placement-dependent reflection used by junctionLayout.
+        parts.addAll(SmartSigns.mountParts(owner.mesh,state));
+      }
+    }
+    return List.copyOf(parts);
+  }
   /** Reserve a small paved pedestal in a planted median, on its actual road owner. */
   static List<RoadStructures.Part> plantedSeats(RoadIndex.Built owner,List<RoadIndex.Built> roads){
     var out=new ArrayList<RoadStructures.Part>();

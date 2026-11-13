@@ -18,6 +18,16 @@ public final class ManualPlannerClient {
   static ManualPlannerScreen map;private static Screen resume,lastChild;private static boolean world;private static net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension;
   private static long openingAt;private static UUID openingRequest;
   private static Screen mapPreviewEditor;
+  private static ManualPlannerScreen.SurfaceCache retainedSurface;
+  private static net.minecraft.client.multiplayer.ClientLevel surfaceLevel;
+  private static long surfaceDeadline;
+  private static double openedX,openedZ;
+  private static int surfaceRadius;
+  private static boolean openedRangeExpired;
+  private static void expireOpenSurface(){var mc=Minecraft.getInstance();if(map!=null&&!openedRangeExpired&&mc.player!=null&&Math.hypot(mc.player.getX()-openedX,mc.player.getZ()-openedZ)>map.cacheRadius()){openedRangeExpired=true;map.invalidateSurface();}}
+  private static void releaseSurface(){if(retainedSurface!=null)retainedSurface.release();retainedSurface=null;surfaceLevel=null;surfaceDeadline=0;}
+  private static void expireSurface(long now){var mc=Minecraft.getInstance();if(retainedSurface!=null&&(surfaceLevel!=mc.level||mc.player==null||now>=surfaceDeadline||Math.hypot(mc.player.getX()-openedX,mc.player.getZ()-openedZ)>surfaceRadius))releaseSurface();}
+
   static boolean hasMap(){return map!=null;}
   static boolean previewing(Object owner){return map!=null&&Minecraft.getInstance().screen==map&&mapPreviewEditor==owner;}
   static boolean hasMapPreview(){return mapPreviewEditor!=null;}
@@ -33,7 +43,7 @@ public final class ManualPlannerClient {
     if(e.phase!=TickEvent.Phase.END)return;var mc=Minecraft.getInstance();
     if(mc.level==null){clear();dimension=null;return;}
     if(dimension!=null&&!dimension.equals(mc.level.dimension())){clear();if(mc.screen instanceof ManualPlannerScreen)mc.setScreen(null);}
-    dimension=mc.level.dimension();long now=net.minecraft.Util.getMillis();
+    dimension=mc.level.dimension();long now=net.minecraft.Util.getMillis();expireSurface(now);expireOpenSurface();
     if(openingAt!=0&&now-openingAt>30000||map!=null&&map.snapshotExpired(now))deliveryFailure("等待服务器超时，请关闭地图后重试");
     if(mc.screen!=null){lastChild=children.contains(mc.screen)?mc.screen:null;}
     else if(lastChild!=null){lastChild=null;if(world)world=false;else if(map!=null){mc.setScreen(map);ClientRoads.beginEditor(map);map.refresh();}}
@@ -52,7 +62,8 @@ public final class ManualPlannerClient {
     if(Minecraft.getInstance().screen!=screen){if(lastChild==screen)lastChild=null;children.remove(screen);}
   }
   private static void cancelOpening(){if(openingRequest!=null&&Minecraft.getInstance().getConnection()!=null){var t=new CompoundTag();t.putString("Action","manualCancelOpen");t.putUUID("OpenRequest",openingRequest);RoadNetwork.CHANNEL.sendToServer(new RoadNetwork.Action(t));}openingRequest=null;openingAt=0;}
-  static void clear(){cancelOpening();abandonMapPreview();if(map!=null)map.release();map=null;resume=null;lastChild=null;world=false;children.clear();}
+  static void clear(){releaseSurface();clearEditors();}
+  private static void clearEditors(){cancelOpening();abandonMapPreview();if(map!=null)map.release();map=null;resume=null;lastChild=null;world=false;children.clear();}
   static void deliveryFailure(String message){if(openingRequest==null&&(map==null||!map.loading()))return;cancelOpening();if(map!=null)map.failSnapshot(message);var mc=Minecraft.getInstance();if(mc.player!=null)mc.player.displayClientMessage(net.minecraft.network.chat.Component.literal("规划地图读取失败："+message),false);com.mojang.logging.LogUtils.getLogger().warn("Manual planner delivery failed: {}",message);}
   static boolean openResult(CompoundTag t){if(!t.hasUUID("OpenRequest"))return false;if(t.getUUID("OpenRequest").equals(openingRequest)&&!t.getBoolean("Success"))cancelOpening();return true;}
   static void opened(CompoundTag t){if(map!=null&&t.hasUUID("PlannerSession")&&map.session.equals(t.getUUID("PlannerSession"))){var screen=Minecraft.getInstance().screen;if(screen!=null&&screen!=map)child(screen);}}
@@ -67,11 +78,18 @@ public final class ManualPlannerClient {
       if(openingRequest==null||!t.hasUUID("OpenRequest")||!openingRequest.equals(t.getUUID("OpenRequest")))return true;
       var mc=Minecraft.getInstance();if(mc.level==null||mc.screen!=null){cancelOpening();return true;}
       openingRequest=null;openingAt=0;
-      if(map==null||!map.session.equals(t.getUUID("PlannerSession"))){clear();map=new ManualPlannerScreen(t);}
+      expireSurface(net.minecraft.Util.getMillis());
+      if(map==null||!map.session.equals(t.getUUID("PlannerSession"))){clearEditors();map=new ManualPlannerScreen(t);if(retainedSurface!=null){map.restoreSurface(retainedSurface);releaseSurface();}}
+      openedX=mc.player.getX();openedZ=mc.player.getZ();openedRangeExpired=false;
       map.state(t);if(t.hasUUID("MapSnapshot"))map.beginSnapshot(t);mc.setScreen(map);ClientRoads.beginEditor(map);
     }else if(map!=null&&map.session.equals(t.getUUID("PlannerSession"))){map.state(t);if(t.hasUUID("MapSnapshot"))map.beginSnapshot(t);}
     return true;
   }
-  static void close(){if(map==null)return;var t=new CompoundTag();t.putString("Action","manualClose");t.putUUID("PlannerSession",map.session);RoadNetwork.CHANNEL.sendToServer(new RoadNetwork.Action(t));clear();Minecraft.getInstance().setScreen(null);}
+  static void close(){
+    if(map==null)return;var mc=Minecraft.getInstance();var t=new CompoundTag();t.putString("Action","manualClose");t.putUUID("PlannerSession",map.session);RoadNetwork.CHANNEL.sendToServer(new RoadNetwork.Action(t));
+    releaseSurface();int seconds=map.cacheSeconds();surfaceRadius=map.cacheRadius();
+    if(seconds>0&&!openedRangeExpired&&mc.player!=null&&Math.hypot(mc.player.getX()-openedX,mc.player.getZ()-openedZ)<=surfaceRadius){retainedSurface=map.detachSurface();surfaceLevel=mc.level;surfaceDeadline=net.minecraft.Util.getMillis()+seconds*1000L;}
+    clearEditors();mc.setScreen(null);
+  }
   private ManualPlannerClient(){}
 }

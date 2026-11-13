@@ -131,7 +131,7 @@ public final class LanePoints {
     return (twoWay?(chosen.sign()>0?"正向":"反向")+" ":"单向 ")+
         (present?ordinal+" / "+same.size()+" 车道"+(LaneSections.edge(mesh,station,index)?"（边缘）":""):"预留空位 "+(index+1));
   }
-  public static boolean supported(Settings s){var type=RoadProfile.catalog(s.style()).type();if(type!=RoadProfile.Type.ORDINARY&&type!=RoadProfile.Type.HIGHWAY&&!s.style().connectorRamp())return false;if(s.structure()!=Structure.BRIDGE)return true;return switch(s.options().infrastructure().bridge()){case STANDARD,BEAM,OVERPASS->true;default->false;};}
+  public static boolean supported(Settings s){var type=RoadProfile.catalog(s.style()).type();if(type!=RoadProfile.Type.ORDINARY&&type!=RoadProfile.Type.HIGHWAY&&!s.style().connectorRamp())return false;if(s.structure()!=Structure.BRIDGE)return true;return switch(s.options().infrastructure().bridge()){case STANDARD,BEAM,OVERPASS,TEMPLATE->true;default->false;};}
   public static boolean opening(Mesh mesh,V location){
     for(var opening:mesh.settings().options().lanePoints().openings())for(int i=1;i<opening.centerline().size();i++){
       V a=opening.centerline().get(i-1),b=opening.centerline().get(i),d=b.sub(a);double length=d.x()*d.x()+d.z()*d.z();if(length<1e-9)continue;double t=Math.max(0,Math.min(1,(location.x()-a.x())*d.x()/length+(location.z()-a.z())*d.z()/length));V p=a.add(d.mul(t));

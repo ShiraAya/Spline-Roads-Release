@@ -19,7 +19,7 @@ final class ElevatedAccessChain {
       // A clamped host can also distort the held mouth and fail the grade check.
       // Re-run the complete planner against real contiguous pavement.
       var middle=new Section(host,host.caps(0).rawMesh(),true);
-      if(!available(host,id)||!RoadContinuity.eligible(middle.raw()))throw single;
+      if(!available(host,id)||!eligible(middle.raw()))throw single;
       var sections=new ArrayDeque<Section>();sections.add(middle);
       var seen=new HashSet<UUID>();seen.add(host.id());
       for(boolean before:new boolean[]{true,false}){
@@ -33,11 +33,14 @@ final class ElevatedAccessChain {
           var candidate=touching.stream().filter(v->!seen.contains(v)).findFirst().orElse(null);
           if(candidate==null)break;
           var r=data.index.roads.get(candidate).record;
-          if(!r.owner().equals(host.owner())||!ElevatedPointTool.supported(r)||!available(r,id)
+          if(!r.owner().equals(host.owner())||!supported(r)||!available(r,id)
               ||r.settings().structure()!=host.settings().structure()||r.settings().style()!=host.settings().style())break;
           var raw=r.caps(0).rawMesh();boolean nextA=r.a().equals(seam);
           var port=atA?previous.raw().first():previous.raw().last();
-          if(!RoadContinuity.compatible(previous.raw(),raw,port.center())
+          if((nextA?raw.first():raw.last()).center().distance(port.center())>RoadContinuity.POSITION_EPS
+              ||Math.abs((atA?previous.road().start().grade():-previous.road().end().grade())
+                  +(nextA?r.start().grade():-r.end().grade()))>1e-4
+              ||!joins(previous.raw(),atA,raw,nextA)
               ||!LanePoints.sameSection(previous.raw(),port.distance(),raw,nextA?0:raw.length())
               ||Math.abs(raw.first().halfWidth()-middle.raw().first().halfWidth())>.01)break;
           previous=new Section(r,raw,before?!nextA:nextA);seen.add(candidate);reach+=raw.length();
@@ -72,6 +75,33 @@ final class ElevatedAccessChain {
       }
       return new Result(plan,result);
     }
+  }
+  // Follow the sampled road geometry, including gentle curves, without moving any
+  // existing pavement. Only the shared terminal frames and physical sections must
+  // continue; a chord through a curved road is not the terminal direction.
+  private static boolean supported(RoadRecord r){
+    return r.assembly()==null&&r.junction()==null&&r.toll()==null&&!r.railway()
+        &&r.settings().mode()!=Mode.RING&&LaneTopology.metadata(r).link()==null;
+  }
+  private static boolean eligible(Mesh mesh){
+    var settings=mesh.settings();var kind=RoadProfile.catalog(settings).type();
+    if(mesh.closed()||mesh.length()<2||settings.structure()==Structure.TUNNEL
+        ||kind!=RoadProfile.Type.ORDINARY&&kind!=RoadProfile.Type.HIGHWAY)return false;
+    var bridge=settings.options().infrastructure().bridge();
+    return settings.structure()!=Structure.BRIDGE||bridge==RoadInfrastructure.Bridge.STANDARD
+        ||bridge==RoadInfrastructure.Bridge.BEAM||bridge==RoadInfrastructure.Bridge.OVERPASS;
+  }
+  private static boolean joins(Mesh a,boolean aFirst,Mesh b,boolean bFirst){
+    if(!eligible(a)||!eligible(b))return false;
+    var ap=aFirst?a.first():a.last();var bp=bFirst?b.first():b.last();
+    if(ap.center().distance(bp.center())>RoadContinuity.POSITION_EPS)return false;
+    var intoA=ap.left().left().mul(aFirst?-1:1);
+    var intoB=bp.left().left().mul(bFirst?-1:1);
+    if(intoA.dot(intoB)>-1+1e-8)return false;
+    boolean reversed=aFirst==bFirst;
+    var ac=RoadLanes.counts(a.settings());var bc=RoadLanes.counts(b.settings());
+    return ac.equals(reversed?bc.mirrored():bc)
+        &&(RoadProfile.catalog(a.settings()).twoWay()||!reversed);
   }
   private static boolean available(RoadRecord r,UUID id){
     var m=LaneTopology.metadata(r);return m.link()==null&&m.cuts().stream().allMatch(c->c.connection().equals(id))

@@ -25,7 +25,7 @@ public final class ClientRoads {
     if(mc.hitResult instanceof net.minecraft.world.phys.BlockHitResult hit){var pos=RoadTool.endpointAtHit(mc.level,hit.getBlockPos(),hit.getLocation());var t=new CompoundTag();t.putString("Action","curveControl");t.putLong("Pos",pos.asLong());beginWorldEdit();sendAction(t);}
   }
   public static final RoadIndex INDEX = new RoadIndex(true);
-  static {INDEX.changed=id->{ClientToolIndex.changed(id);SmartSignClient.candidatesChanged(id);};}
+  static {INDEX.changed=id->{ClientToolIndex.changed(id);SmartSignClient.candidatesChanged(id);SidewalkBlockModels.changed(INDEX,id);};}
   public static CompoundTag draft;
   private static final com.sora.splineroads.core.RoadEditRequests editRequests = new com.sora.splineroads.core.RoadEditRequests();
   private static final Object WORLD_EDITOR = new Object();
@@ -268,7 +268,7 @@ public final class ClientRoads {
         // Release preview-only waits; this ACK must not request another sync.
         TollScreen.deliveryRecovery();LaneRampScreen.deliveryRecovery();CorridorScreen.deliveryRecovery();
         if(!t.getBoolean("ResetRoads")){if(coldSync.pending())coldSyncAcks++;coldSync.acknowledged();}
-        if(t.getBoolean("ResetRoads")){RoadRenderer.reset();INDEX.clear();ClientToolIndex.clear();prune.clear();resetCold();SmartSignClient.clear();receivedBatches.clear();}
+        if(t.getBoolean("ResetRoads")){RoadRenderer.reset();INDEX.clear();SidewalkBlockModels.clear();ClientToolIndex.clear();prune.clear();resetCold();SmartSignClient.clear();receivedBatches.clear();}
         return;
       }
       if(type.equals("roadBatch")){receiveBatch(t,batch);return;}
@@ -283,7 +283,7 @@ public final class ClientRoads {
           changed.add(r.id());
           if (previous != null) INDEX.surfaceNeighbors(previous).forEach(b -> changed.add(b.record.id()));
           var built = decoded == null ? new RoadIndex.Built(r, true) : decoded;
-          SmartSignClient.roadChanged(r.id());INDEX.put(built);residencyRoads.add(r.id());
+          SmartSignClient.roadChanged(r.id());INDEX.put(built);SidewalkBlockModels.changed(INDEX,built.record.id());residencyRoads.add(r.id());
           INDEX.surfaceNeighbors(built).forEach(b -> changed.add(b.record.id()));
           RoadRenderer.changed(changed);
         }
@@ -321,7 +321,7 @@ public final class ClientRoads {
 
     var ids=new HashSet<UUID>();for(var r:batch)ids.add(r.record.id());var changed=new HashSet<>(ids);
     for(var entry:packet.getList("Replaced",net.minecraft.nbt.Tag.TAG_COMPOUND)){UUID id=((CompoundTag)entry).getUUID("Id");changed.add(id);var old=INDEX.roads.get(id);if(old!=null)INDEX.surfaceNeighbors(old).forEach(r->changed.add(r.record.id()));if(!ids.contains(id)){var weight=cold.remove(id);if(weight!=null){coldBytes-=weight;coldChanged();coldGpuTrimmed.remove(id);}INDEX.remove(id);SmartSignClient.remove(id);}}
-    for(var r:batch){awaken(r.record.id());SmartSignClient.roadChanged(r.record.id());INDEX.put(r);residencyRoads.add(r.record.id());}
+    for(var r:batch){awaken(r.record.id());SmartSignClient.roadChanged(r.record.id());INDEX.put(r);SidewalkBlockModels.changed(INDEX,r.record.id());residencyRoads.add(r.record.id());}
     for(var r:batch)INDEX.surfaceNeighbors(r).forEach(b->changed.add(b.record.id()));
     for(var entry:packet.getList("SignPackets",net.minecraft.nbt.Tag.TAG_COMPOUND))SmartSignClient.receive((CompoundTag)entry);
     var level=Minecraft.getInstance().level;if(level!=null&&packet.contains("Node")){var pos=net.minecraft.core.BlockPos.of(packet.getLong("NodePos"));if(level.getBlockEntity(pos) instanceof NodeEntity marker)marker.load(packet.getCompound("Node"));}
@@ -350,7 +350,7 @@ public final class ClientRoads {
       receivedBatches.clear();
 
       RoadRenderer.reset();
-      INDEX.clear();ClientToolIndex.clear();prune.clear();resetCold();SmartSignClient.clear();
+      INDEX.clear();SidewalkBlockModels.clear();ClientToolIndex.clear();prune.clear();resetCold();SmartSignClient.clear();
 
       inbox.reset();
       editRequests.reset();
@@ -471,7 +471,7 @@ public final class ClientRoads {
       LaneRampScreen.clear();
       CorridorScreen.clear();
     RoadRenderer.reset();
-    INDEX.clear();ClientToolIndex.clear();prune.clear();resetCold();SmartSignClient.clear();
+    INDEX.clear();SidewalkBlockModels.clear();ClientToolIndex.clear();prune.clear();resetCold();SmartSignClient.clear();
 
     inbox.reset();
     editRequests.reset();

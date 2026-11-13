@@ -23,7 +23,7 @@ import org.lwjgl.glfw.GLFW;
 
 /** A client-only view of session-resident terrain and authoritative road/point records. */
 public final class ManualPlannerScreen extends Screen {
-  final UUID session;private CompoundTag state;private double cx,cz,zoom=3;private int tool=1,arms=4;
+  final UUID session;private CompoundTag state;private double cx,cz,zoom=3;private int tool=1,arms=4,endpointMode;
   private final List<Button> toolbar=new ArrayList<>();
   private Button resumePreview;
   private String status="选择工具后单击地图；右键点可打开菜单";private boolean help;
@@ -44,11 +44,26 @@ public final class ManualPlannerScreen extends Screen {
   private final Map<UUID,RoadIndex.Built> pendingRoads=new LinkedHashMap<>();
   private final Map<Long,CompoundTag> pendingNodes=new HashMap<>();
   private final Map<Long,MapTile> tiles=new HashMap<>();private final Map<Long,CompoundTag> mapNodes=new HashMap<>();private int terrainStep=1,loadedTiles,totalTiles;
-  private record MapTile(int[] colors,int[] heights){}private double pressX,pressY,pressCenterX,pressCenterZ,pressAt;private V movingAt;private int axis;private long confirmAt;private double confirmX,confirmY;
+  private record MapTile(int[] colors,int[] heights){}
+  /** Surface data only: no session, road, node, selection or editor state survives closing. */
+  static final class SurfaceCache {
+    final Map<Long,MapTile> tiles;DynamicTexture terrain;ResourceLocation texture;
+    SurfaceCache(Map<Long,MapTile> tiles,DynamicTexture terrain,ResourceLocation texture){this.tiles=tiles;this.terrain=terrain;this.texture=texture;}
+    void release(){if(texture!=null)Minecraft.getInstance().getTextureManager().release(texture);terrain=null;texture=null;tiles.clear();}
+  }
+  void invalidateSurface(){
+    tiles.clear();if(texture!=null)Minecraft.getInstance().getTextureManager().release(texture);texture=null;
+    if(terrain!=null){terrain=new DynamicTexture(new NativeImage(1024,1024,false));texture=Minecraft.getInstance().getTextureManager().register("sr_manual_map",terrain);terrainReady=false;resetTerrain();}
+  }
+  int cacheSeconds(){return Math.max(0,Math.min(60,state.getInt("CacheSeconds")));}
+  int cacheRadius(){return Math.max(16,Math.min(2048,state.getInt("Radius")));}
+  SurfaceCache detachSurface(){var saved=new SurfaceCache(new HashMap<>(tiles),terrain,texture);tiles.clear();terrain=null;texture=null;return saved;}
+  void restoreSurface(SurfaceCache saved){tiles.putAll(saved.tiles);saved.tiles.clear();terrain=saved.terrain;texture=saved.texture;saved.terrain=null;saved.texture=null;terrainReady=false;}
+private double pressX,pressY,pressCenterX,pressCenterZ,pressAt;private V movingAt;private int axis;private long confirmAt;private double confirmX,confirmY;
   private int menuX=-1,menuY,terrainX,terrainZ,terrainCursor;private long terrainUploaded,terrainFinished;private int terrainScanStart;private boolean terrainReady,terrainDirty;private final int[] heights=new int[1024*1024];
   private DynamicTexture terrain;private ResourceLocation texture;private final Set<Integer> keys=new HashSet<>();
   ManualPlannerScreen(CompoundTag t){super(Component.literal("Spline Roads · 手动规划"));session=t.getUUID("PlannerSession");state=t.copy();var p=Minecraft.getInstance().player;cx=p.getX();cz=p.getZ();Arrays.fill(heights,Integer.MIN_VALUE);}
-  void state(CompoundTag t){if(t.contains("MapRoads")||t.contains("Nodes"))mapRevision++;state=t.copy();tool=t.getInt("Tool");arms=t.getInt("Arms");if(t.contains("MapRoads")){var ids=new HashSet<UUID>();for(Tag value:t.getList("MapRoads",Tag.TAG_COMPOUND)){var r=RoadRecord.load((CompoundTag)value);ids.add(r.id());var old=mapRoads.get(r.id());if(old==null||!old.record.equals(r))mapRoads.put(r.id(),RoadIndex.Built.loading(r));}mapRoads.keySet().retainAll(ids);hidden.retainAll(ids);}if(t.contains("Nodes")){mapNodes.clear();for(Tag value:t.getList("Nodes",Tag.TAG_COMPOUND)){var n=(CompoundTag)value;mapNodes.put(n.getLong("Pos"),n);}}updateToolbar();}
+  void state(CompoundTag t){interchangePending=false;if(t.contains("MapRoads")||t.contains("Nodes"))mapRevision++;state=t.copy();tool=t.getInt("Tool");arms=t.getInt("Arms");endpointMode=Math.max(0,Math.min(3,t.getInt("EndpointMode")));if(t.contains("MapRoads")){var ids=new HashSet<UUID>();for(Tag value:t.getList("MapRoads",Tag.TAG_COMPOUND)){var r=RoadRecord.load((CompoundTag)value);ids.add(r.id());var old=mapRoads.get(r.id());if(old==null||!old.record.equals(r))mapRoads.put(r.id(),RoadIndex.Built.loading(r));}mapRoads.keySet().retainAll(ids);hidden.retainAll(ids);}if(t.contains("Nodes")){mapNodes.clear();for(Tag value:t.getList("Nodes",Tag.TAG_COMPOUND)){var n=(CompoundTag)value;mapNodes.put(n.getLong("Pos"),n);}}updateToolbar();}
   void beginSnapshot(CompoundTag t){snapshot=t.getUUID("MapSnapshot");nextPage=0;pageCount=t.getInt("Pages");expectedRoads=t.getInt("RoadCount");expectedNodes=t.getInt("NodeCount");pendingRoads.clear();pendingNodes.clear();snapshotAt=net.minecraft.Util.getMillis();if(expectedRoads<0||expectedNodes<0||pageCount<1||pageCount>Math.max(1,(long)expectedRoads+expectedNodes))throw new IllegalArgumentException("规划地图批次数量错误，请重新打开");status="正在加载规划道路…";}
   boolean loading(){return snapshot!=null;}
   boolean snapshotExpired(long now){return loading()&&now-snapshotAt>30000;}
@@ -82,11 +97,11 @@ public final class ManualPlannerScreen extends Screen {
     addRenderableWidget(Button.builder(Component.literal("? 操作说明"),b->help=!help).bounds(width-102,8,94,20).build());
     resumePreview=addRenderableWidget(Button.builder(Component.literal("返回设置"),b->ManualPlannerClient.resumeMapPreview()).bounds(8,height-54,100,20).build());
     addRenderableWidget(Button.builder(Component.literal("关闭地图"),b->onClose()).bounds(8,height-28,100,20).build());
-    updateToolbar();if(terrain==null){terrain=new DynamicTexture(new NativeImage(1024,1024,false));texture=minecraft.getTextureManager().register("sr_manual_map",terrain);resetTerrain();}
+    updateToolbar();if(terrain==null){terrain=new DynamicTexture(new NativeImage(1024,1024,false));texture=minecraft.getTextureManager().register("sr_manual_map",terrain);}resetTerrain();
   }
-  private void updateToolbar(){for(int i=0;i<toolbar.size();i++){var text=toolbar.get(i).getMessage().getString();if(i==4)text="5  "+arms+"向立交";toolbar.get(i).setMessage(Component.literal(text).withStyle(i+1==tool?net.minecraft.ChatFormatting.AQUA:net.minecraft.ChatFormatting.WHITE));}}
-  private void choose(int n){if(tool!=n){selected=null;selectedRoad=null;openSelected=false;}tool=n;updateToolbar();menuX=-1;moving=false;var t=command("manualTool");t.putInt("Tool",tool);t.putInt("Arms",arms);ClientRoads.sendAction(t);status=hint();}
-  private String hint(){return switch(tool){case 2->"单击地表放置端点；Ctrl：附属点；左 Alt＋单击道路：高架出入点";case 3->"选择端点或附属点 A → B；Ctrl：经过点；左 Alt：控制点";case 4->"Ctrl：创建车道点；选 A / B；左 Alt：匝道放置点";case 5->"Ctrl＋滚轮切换 3–6 向，当前 "+arms+" 向";case 6->"单击道路断面，或依次选择端点 A / B";case 7->"单击空闲端点作为环岛圆心";default->"首次单击选中，再次单击打开；右键菜单；H 恢复隐藏";};}
+  private void updateToolbar(){for(int i=0;i<toolbar.size();i++){var text=toolbar.get(i).getMessage().getString();if(i==4)text="5  "+arms+"向立交";if(i==1)text="2  "+endpointName();toolbar.get(i).setMessage(Component.literal(text).withStyle(i+1==tool?net.minecraft.ChatFormatting.AQUA:net.minecraft.ChatFormatting.WHITE));}}
+  private void choose(int n){interchangePending=false;if(tool!=n){selected=null;selectedRoad=null;openSelected=false;}tool=n;updateToolbar();menuX=-1;moving=false;var t=command("manualTool");t.putInt("Tool",tool);t.putInt("Arms",arms);t.putInt("EndpointMode",endpointMode);ClientRoads.sendAction(t);status=hint();}
+  private String hint(){return switch(tool){case 2->"Ctrl＋滚轮切换：道路端点 → 路口点 → 附属点 → 出入点；当前："+endpointName();case 3->"选择端点或附属点 A → B；Ctrl：经过点；左 Alt：控制点";case 4->"Ctrl：创建车道点；选 A / B；左 Alt：匝道放置点";case 5->"双击主路依次选 AB、CD、EF；3/5向末端选 C/E；Ctrl＋滚轮切换向数";case 6->"单击道路断面，或依次选择端点 A / B";case 7->"单击空闲端点作为环岛圆心";default->"首次单击选中，再次单击打开；右键菜单；H 恢复隐藏";};}
   private void resetTerrain(){
     int step=Math.max(1,(int)Math.ceil(Math.max((right()-left())/zoom,(bottom()-top())/zoom)/1024));
     int nx=((int)Math.floor(cx)-512*step)&~15,nz=((int)Math.floor(cz)-512*step)&~15;
@@ -128,6 +143,8 @@ public final class ManualPlannerScreen extends Screen {
     }
   }
   private V terrain(double x,double y){int bx=(int)Math.floor(wx(x)),bz=(int)Math.floor(wz(y));var tile=tiles.get(net.minecraft.world.level.ChunkPos.asLong(bx>>4,bz>>4));return tile==null?null:new V(wx(x),tile.heights()[(bz&15)*16+(bx&15)],wz(y));}
+  private boolean interchangePending;private long roadClickAt;private double roadClickX,roadClickY;private UUID roadClickId;
+  private boolean interchangeTerminal(){int count=state.getCompound("Selection").getLongArray("Points").length;return (arms==3||arms==5)&&count==arms-1;}
   private boolean nodeVisible(BlockPos pos){boolean linked=false;for(var b:mapRoads.values())if(b.record.a().equals(pos)||b.record.b().equals(pos)){linked=true;if(!hidden.contains(b.record.id()))return true;}return !linked;}
   private void collect(){
     if(preparedRevision==mapRevision&&preparedCx==cx&&preparedCz==cz&&preparedZoom==zoom&&preparedWidth==width&&preparedHeight==height&&preparedHidden.equals(hidden))return;
@@ -137,7 +154,7 @@ public final class ManualPlannerScreen extends Screen {
     for(var p:points){var cover=road(sx(p.at().x()),sy(p.at().z()));if(cover!=null){var q=RoadQueries.horizontal(cover.mesh,p.at());if(q.horizontalDistance()<q.sample().halfWidth()&&q.sample().center().y()>p.at().y()+.1)continue;}displayedPoints.add(p);}
     preparedCx=cx;preparedCz=cz;preparedZoom=zoom;preparedWidth=width;preparedHeight=height;preparedHidden=Set.copyOf(hidden);preparedRevision=mapRevision;
   }
-  private void collectPoints(){points.clear();var nodes=new HashSet<BlockPos>();for(Tag value:mapNodes.values()){var t=(CompoundTag)value;var pos=BlockPos.of(t.getLong("Pos"));if(!nodeVisible(pos))continue;nodes.add(pos);points.add(new Point("node",null,null,pos,RoadRecord.readNode(t.getCompound("Node")).position()));}
+  private void collectPoints(){points.clear();var nodes=new HashSet<BlockPos>();for(Tag value:mapNodes.values()){var t=(CompoundTag)value;var pos=BlockPos.of(t.getLong("Pos"));if(!nodeVisible(pos))continue;nodes.add(pos);points.add(new Point(t.getBoolean("JunctionMarker")?"junction":"node",null,null,pos,RoadRecord.readNode(t.getCompound("Node")).position()));}
     for(var b:mapRoads.values()){var r=b.record;if(hidden.contains(b.record.id())||!visible(b.mesh))continue;if(r.railway()){for(boolean first:new boolean[]{true,false})points.add(new Point("rail",r.id(),null,null,(first?r.start():r.end()).position()));continue;}if(!r.settings().style().ramp()&&LaneTopology.metadata(r).link()==null)for(boolean first:new boolean[]{true,false}){var pos=first?r.a():r.b();if(nodes.add(pos))points.add(new Point("node",null,null,pos,(first?r.start():r.end()).position()));}
       for(var p:LaneTopology.visiblePoints(r))points.add(new Point("lane",r.id(),p.id(),null,p.position()));var controls=new HashSet<UUID>();for(var p:r.settings().options().routing().controls()){controls.add(p.id());points.add(new Point("control",r.id(),p.id(),null,p.position()));}for(var p:r.settings().options().attachments().points())if(!controls.contains(p.id()))points.add(new Point(p.elevated()?"elevated":"attached",r.id(),p.id(),null,p.position()));
     }
@@ -159,14 +176,19 @@ public final class ManualPlannerScreen extends Screen {
       else {confirmAt=now;confirmX=x;confirmY=y;}
       return true;
     }
-    if(super.mouseClicked(x,y,button))return true;if(!map(x,y))return false;collect();var previousPoint=selected;var previousRoad=selectedRoad;selected=pick(x,y);var road=selected==null?road(x,y):null;selectedRoad=selected!=null&&selected.kind().equals("rail")?selected.road():road==null?null:road.record.id();openSelected=selected!=null&&previousPoint!=null&&same(selected,previousPoint)||selected==null&&selectedRoad!=null&&selectedRoad.equals(previousRoad);
+    if(tool==5&&interchangePending&&button==0&&map(x,y)){status="正在同步已选主路，请稍候选择下一条";return true;}
+    if(super.mouseClicked(x,y,button))return true;if(!map(x,y))return false;collect();var previousPoint=selected;var previousRoad=selectedRoad;selected=tool==5&&!interchangeTerminal()?null:pick(x,y);var road=selected==null?road(x,y):null;selectedRoad=selected!=null&&selected.kind().equals("rail")?selected.road():road==null?null:road.record.id();openSelected=selected!=null&&previousPoint!=null&&same(selected,previousPoint)||selected==null&&selectedRoad!=null&&selectedRoad.equals(previousRoad);
     if(button==0&&selected!=null&&selected.kind().equals("rail")&&tool!=1){status="铁路端点 · 使用指针再次单击打开编辑";return true;}
     if(button==1){if(selected!=null||selectedRoad!=null){menuX=Math.min((int)x,right()-122);menuY=Math.min((int)y,bottom()-menuRows()*22);}return true;}
     if(button==0){pressed=true;dragged=false;pressX=x;pressY=y;pressCenterX=cx;pressCenterZ=cz;pressAt=net.minecraft.Util.getMillis();return true;}return false;
   }
   @Override public boolean mouseDragged(double x,double y,int button,double dx,double dy){if(moving&&axis!=0){movingAt=new V(axis==1?wx(x):movingAt.x(),movingAt.y(),axis==2?wz(y):movingAt.z());return true;}if(pressed&&button==0&&(dragged||net.minecraft.Util.getMillis()-pressAt>160&&Math.hypot(x-pressX,y-pressY)>3)){dragged=true;cx=pressCenterX-(x-pressX)/zoom;cz=pressCenterZ-(y-pressY)/zoom;return true;}return super.mouseDragged(x,y,button,dx,dy);}
-  @Override public boolean mouseReleased(double x,double y,int button){if(moving&&axis!=0){axis=0;return true;}if(pressed&&button==0){pressed=false;if(dragged&&tool==1){selected=null;selectedRoad=null;openSelected=false;}if(!dragged&&map(x,y)){if(tool!=1||openSelected)send("manualClick",selected,selectedRoad,x,y);else status="已选中，再次单击打开设置；右键打开菜单";}return true;}return super.mouseReleased(x,y,button);}
-  @Override public boolean mouseScrolled(double x,double y,double delta){if(hasControlDown()&&tool==5){cycleArms(delta);return true;}if(!map(x,y))return false;double beforeX=wx(x),beforeZ=wz(y);zoom=Math.max(minimumZoom(),Math.min(24,zoom*Math.pow(1.2,delta)));cx+=beforeX-wx(x);cz+=beforeZ-wz(y);return true;}
+  @Override public boolean mouseReleased(double x,double y,int button){if(moving&&axis!=0){axis=0;return true;}if(pressed&&button==0){pressed=false;if(dragged&&tool==1){selected=null;selectedRoad=null;openSelected=false;}if(dragged){roadClickAt=0;roadClickId=null;}if(!dragged&&map(x,y)){if(tool==5&&!interchangeTerminal()){
+      long now=net.minecraft.Util.getMillis();if(selectedRoad!=null&&selectedRoad.equals(roadClickId)&&now-roadClickAt<=300&&Math.hypot(x-roadClickX,y-roadClickY)<=5){interchangePending=true;send("manualClick",null,selectedRoad,x,y);roadClickAt=0;roadClickId=null;}else{roadClickAt=now;roadClickId=selectedRoad;roadClickX=x;roadClickY=y;status="双击此主路以选择一对端点";}
+    }else if(tool!=1||openSelected)send("manualClick",selected,selectedRoad,x,y);else status="已选中，再次单击打开设置；右键打开菜单";}return true;}return super.mouseReleased(x,y,button);}
+  @Override public boolean mouseScrolled(double x,double y,double delta){if(hasControlDown()&&tool==2){cycleEndpointMode(delta);return true;}if(hasControlDown()&&tool==5){cycleArms(delta);return true;}if(!map(x,y))return false;double beforeX=wx(x),beforeZ=wz(y);zoom=Math.max(minimumZoom(),Math.min(24,zoom*Math.pow(1.2,delta)));cx+=beforeX-wx(x);cz+=beforeZ-wz(y);return true;}
+  private String endpointName(){return switch(endpointMode){case 1->"路口点";case 2->"附属点";case 3->"出入点";default->"道路端点";};}
+  void cycleEndpointMode(double delta){if(delta==0)return;endpointMode=Math.floorMod(endpointMode+(delta>0?1:-1),4);choose(tool);}
   private double minimumZoom(){return Math.max(.025,Math.min(right()-left(),bottom()-top())/(4096.0*1.1));}
   void cycleArms(double delta){if(delta==0)return;arms=3+Math.floorMod(arms-3+(delta>0?1:-1),4);choose(tool);}
   @Override public boolean keyPressed(int key,int scan,int modifiers){if(key>=GLFW.GLFW_KEY_1&&key<=GLFW.GLFW_KEY_7){choose(key-GLFW.GLFW_KEY_1+1);return true;}if(hasControlDown()&&(key==GLFW.GLFW_KEY_Z||key==GLFW.GLFW_KEY_Y)){ClientRoads.sendAction(command(key==GLFW.GLFW_KEY_Z?"manualUndo":"manualRedo"));return true;}if(key==GLFW.GLFW_KEY_H){hidden.clear();status="已恢复全部道路和铁路路基";return true;}if(key==GLFW.GLFW_KEY_DELETE){remove();return true;}if(ManualPlannerClient.KEY.matches(key,scan)){onClose();return true;}if(Set.of(GLFW.GLFW_KEY_W,GLFW.GLFW_KEY_A,GLFW.GLFW_KEY_S,GLFW.GLFW_KEY_D,GLFW.GLFW_KEY_LEFT_SHIFT).contains(key)){keys.add(key);return true;}return super.keyPressed(key,scan,modifiers);}
@@ -182,7 +204,7 @@ public final class ManualPlannerScreen extends Screen {
     if(terrainDirty&&terrain!=null){terrain.upload();terrainDirty=false;}
     if(texture!=null){int x=(int)Math.floor(sx(terrainX)),y=(int)Math.floor(sy(terrainZ)),size=(int)Math.ceil(1024*terrainStep*zoom);g.blit(texture,x,y,size,size,0,0,1024,1024,1024,1024);}
     drawRoads(g);drawPreview(g);collect();
-    for(var p:displayedPoints){int x=(int)sx(p.at().x()),y=(int)sy(p.at().z());int color=switch(p.kind()){case "rail"->0xffc9a3ff;case "lane"->0xff4db8ff;case "control"->0xffde76ff;case "attached"->0xffff7571;case "elevated"->0xff33ccff;default->0xffffd36b;};g.fill(x-2,y-2,x+3,y+3,color);if(p.kind().equals("rail"))g.renderOutline(x-3,y-3,7,7,0xff7858a3);if(selected!=null&&same(selected,p)){g.renderOutline(x-5,y-5,11,11,0xffffffff);}}
+    for(var p:displayedPoints){int x=(int)sx(p.at().x()),y=(int)sy(p.at().z());int color=switch(p.kind()){case "junction"->0xff73f07b;case "rail"->0xffc9a3ff;case "lane"->0xff4db8ff;case "control"->0xffde76ff;case "attached"->0xffff7571;case "elevated"->0xff33ccff;default->0xffffd36b;};g.fill(x-2,y-2,x+3,y+3,color);if(p.kind().equals("rail"))g.renderOutline(x-3,y-3,7,7,0xff7858a3);if(selected!=null&&same(selected,p)){g.renderOutline(x-5,y-5,11,11,0xffffffff);}}
     var selection=state.getCompound("Selection");var selectedNodes=new HashSet<Long>();if(selection.contains("Start"))selectedNodes.add(selection.getLong("Start"));for(long pos:selection.getLongArray("Points"))selectedNodes.add(pos);for(var p:points)if(p.pos()!=null&&selectedNodes.contains(p.pos().asLong())||selection.hasUUID("SidePoint")&&selection.getUUID("SidePoint").equals(p.id()))g.renderOutline((int)sx(p.at().x())-6,(int)sy(p.at().z())-6,13,13,0xff74ffae);
     int px=(int)sx(minecraft.player.getX()),py=(int)sy(minecraft.player.getZ());g.fill(px-3,py-3,px+4,py+4,0xffffffff);g.drawString(font,"你",px+6,py-3,0xffffffff,false);
     if(moving)drawMoveAxes(g,mx,my);
@@ -192,7 +214,7 @@ public final class ManualPlannerScreen extends Screen {
     if(height>330&&!resumePreview.visible)g.drawString(font,"工具 "+tool+(tool==5?" · "+arms+" 向":""),10,height-54,0xff74ffae,false);
     super.render(g,mx,my,dt);
     if(menuX>=0){g.fill(menuX,menuY,menuX+122,menuY+menuRows()*22,0xf5213142);String[] rows=selectedRoad!=null?new String[]{"详细设置","删除","暂时隐藏（H 恢复）","取消"}:new String[]{"详细设置 / XYZ","删除","移动","取消"};for(int i=0;i<rows.length;i++){if(mx>=menuX&&mx<menuX+122&&my>=menuY+i*22&&my<menuY+(i+1)*22)g.fill(menuX+1,menuY+i*22,menuX+121,menuY+(i+1)*22,0xff34536b);g.drawString(font,rows[i],menuX+9,menuY+i*22+7,0xffffffff,false);}}
-    if(help){String[] lines={"W A S D 平移；滚轮缩放；长按左键拖动", "主键盘 1–7 切换工具（不含小键盘）", "Delete 删除；Ctrl Z 撤销；Ctrl Y 重做", "道路：A → 经过点/控制点 → B", "Ctrl 经过点在路上；左 Alt 控制点影响弯曲", "同一路段只能使用其中一种点", "立交：Ctrl＋滚轮选择 3–6 向", "右键点：详细设置、删除、XZ 移动", "拖动箭头后双击确认；右键取消移动", "高架：深蓝/深紫；地下：灰/浅灰", "实景预览后按 P 返回设置；Esc 返回地图", "设置加载半径；地表保留至本次规划关闭", "操作半径2048格；H 恢复全部隐藏道路"};int x=Math.max(left()+8,width-365),y=38;g.fill(x-8,y-8,width-8,y+lines.length*16+8,0xf5162533);for(int i=0;i<lines.length;i++)g.drawString(font,lines[i],x,y+i*16,0xffe1eaf0,false);}
+    if(help){String[] lines={"W A S D 平移；滚轮缩放；长按左键拖动", "主键盘 1–7 切换工具（不含小键盘）", "Delete 删除；Ctrl Z 撤销；Ctrl Y 重做", "道路：A → 经过点/控制点 → B", "Ctrl 经过点在路上；左 Alt 控制点影响弯曲", "同一路段只能使用其中一种点", "端点：Ctrl＋滚轮切换四种点", "立交：Ctrl＋滚轮选择 3–6 向", "右键点：详细设置、删除、XZ 移动", "拖动箭头后双击确认；右键取消移动", "高架：深蓝/深紫；地下：灰/浅灰", "实景预览后按 P 返回设置；Esc 返回地图", "缓存关闭延时0–60秒；离开加载半径立即释放", "操作半径2048格；H 恢复全部隐藏道路"};int x=Math.max(left()+8,width-365),y=38;g.fill(x-8,y-8,width-8,y+lines.length*16+8,0xf5162533);for(int i=0;i<lines.length;i++)g.drawString(font,lines[i],x,y+i*16,0xffe1eaf0,false);}
   }
   private void drawMoveAxes(GuiGraphics g,int mx,int my){
     int x=(int)sx(movingAt.x()),y=(int)sy(movingAt.z());
@@ -226,13 +248,24 @@ public final class ManualPlannerScreen extends Screen {
     BufferUploader.drawWithShader(buffer.end());RenderSystem.disableBlend();RenderSystem.enableCull();g.drawString(font,"绿色：待建预览",left()+8,top()+8,0xff74ffae,false);
   }
   final class PlannerSettings extends Screen {
-    private int radius=state.contains("Radius")?state.getInt("Radius"):256,steps=state.contains("MaxUndo")?state.getInt("MaxUndo"):30;
+    private int radius=state.contains("Radius")?state.getInt("Radius"):256,steps=state.contains("MaxUndo")?state.getInt("MaxUndo"):30,cacheSeconds=ManualPlannerScreen.this.cacheSeconds();
     PlannerSettings(){super(Component.literal("道路规划设置"));}
-    @Override protected void init(){int x=width/2-140,y=height/2-55;addRenderableWidget(new SettingSlider(x,y,true,radius,16,2048));addRenderableWidget(new SettingSlider(x,y+32,false,steps,1,30));addRenderableWidget(Button.builder(Component.literal("保存"),b->{var t=command("manualSettings");t.putInt("Radius",radius);t.putInt("MaxUndo",steps);ClientRoads.sendAction(t);onClose();}).bounds(x,y+82,133,20).build());addRenderableWidget(Button.builder(Component.literal("返回"),b->onClose()).bounds(x+147,y+82,133,20).build());ManualPlannerClient.child(this);ClientRoads.beginEditor(this);}
+    @Override protected void init(){int x=width/2-140,y=height/2-76;
+      addRenderableWidget(new SettingSlider(x,y,0,radius,16,2048));
+      addRenderableWidget(new SettingSlider(x,y+28,1,steps,1,30));
+      addRenderableWidget(new SettingSlider(x,y+56,2,cacheSeconds,0,60));
+      addRenderableWidget(Button.builder(Component.literal("保存"),b->{var t=command("manualSettings");t.putInt("Radius",radius);t.putInt("MaxUndo",steps);t.putInt("CacheSeconds",cacheSeconds);ClientRoads.sendAction(t);onClose();}).bounds(x,y+108,133,20).build());
+      addRenderableWidget(Button.builder(Component.literal("返回"),b->onClose()).bounds(x+147,y+108,133,20).build());ManualPlannerClient.child(this);ClientRoads.beginEditor(this);}
     @Override public void onClose(){minecraft.setScreen(ManualPlannerScreen.this);ClientRoads.beginEditor(ManualPlannerScreen.this);}
     @Override public boolean isPauseScreen(){return false;}
-    @Override public void render(GuiGraphics g,int x,int y,float dt){renderBackground(g);g.drawCenteredString(font,title,width/2,height/2-85,0xffffffff);g.drawCenteredString(font,"地表分批加载并保留到关闭；操作范围为半径2048格",width/2,height/2+13,0xffbfd0e0);super.render(g,x,y,dt);}
-    final class SettingSlider extends AbstractSliderButton {private final boolean terrainSetting;private final int min,max;SettingSlider(int x,int y,boolean terrainSetting,int current,int min,int max){super(x,y,280,22,Component.empty(),(current-min)/(double)(max-min));this.terrainSetting=terrainSetting;this.min=min;this.max=max;updateMessage();}protected void updateMessage(){setMessage(Component.literal(terrainSetting?"地表加载半径："+radius+" 格":"撤销最大步："+steps));}protected void applyValue(){int n=min+(int)Math.round(value*(max-min));if(terrainSetting)radius=n;else steps=n;updateMessage();}}
+    @Override public void render(GuiGraphics g,int x,int y,float dt){renderBackground(g);g.drawCenteredString(font,title,width/2,height/2-102,0xffffffff);super.render(g,x,y,dt);for(var child:children())if(child instanceof SettingSlider slider&&slider.isMouseOver(x,y)){g.renderTooltip(font,font.split(Component.literal(slider.hint()),Math.max(1,Math.min(300,width-16))),(sw,sh,mx,my,tw,th)->new org.joml.Vector2i(Math.max(4,Math.min(mx+12,sw-tw-4)),Math.max(4,Math.min(my+12,sh-th-6))),x,y);break;}}
+    final class SettingSlider extends AbstractSliderButton {
+      private final int setting,min,max;
+      SettingSlider(int x,int y,int setting,int current,int min,int max){super(x,y,280,22,Component.empty(),(current-min)/(double)(max-min));this.setting=setting;this.min=min;this.max=max;updateMessage();}
+      String hint(){return switch(setting){case 0->"以打开地图的位置为中心加载地表；离开此范围会释放缓存";case 1->"最多保留的规划撤销步骤数";default->"关闭后按时释放；离开打开位置超过加载半径即释放";};}
+      protected void updateMessage(){setMessage(Component.literal(switch(setting){case 0->"地表加载半径："+radius+" 格";case 1->"撤销最大步："+steps;default->"关闭后释放地表缓存："+cacheSeconds+" 秒";}));}
+      protected void applyValue(){int n=min+(int)Math.round(value*(max-min));switch(setting){case 0->radius=n;case 1->steps=n;default->cacheSeconds=n;}updateMessage();}
+    }
   }
   final class PointDetails extends Screen {
     private final Point point;private final EditBox[] xyz=new EditBox[3];private String message="坐标修改与原有道路校验同时执行";

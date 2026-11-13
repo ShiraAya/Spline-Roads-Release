@@ -38,9 +38,9 @@ public final class MultiLevelBridges {
     }
     if(beneath.isEmpty())return null;
     var frame=RoadSupports.portal(at,thickness,depth,reach,width,ground);
-    if(frame.isEmpty())throw new IllegalArgumentException("多层桥的共用桥墩没有安全基础，请调整桥宽或桥位");
+    if(frame.isEmpty()){ground.missingSupport(at.distance(),"多层桥共用支撑没有可用基础或净空，已省略");return List.of();}
     var shafts=frame.stream().filter(Part::pier).toList();
-    if(shafts.size()<2)throw new IllegalArgumentException("多层桥缺少成对支撑");
+    if(shafts.size()<2){ground.missingSupport(at.distance(),"多层桥共用支撑无法成对放置，已省略");return List.of();}
     var min=shafts.stream().min(Comparator.comparingDouble(p->p.a().sub(at.center()).dot(at.left()))).orElseThrow();
     var max=shafts.stream().max(Comparator.comparingDouble(p->p.a().sub(at.center()).dot(at.left()))).orElseThrow();
     var parts=new ArrayList<>(frame);
@@ -48,7 +48,7 @@ public final class MultiLevelBridges {
       double floor=ground.top(q.sample().center().x(),q.sample().center().z(),top);
       if(Double.isFinite(floor)&&floor>=top-.2)continue;
       var beam=new Part(new V(min.a().x(),top-.8,min.a().z()),new V(max.a().x(),top-.8,max.a().z()),Math.max(1.5,width),.8,false,Material.CONCRETE);
-      if(ground.blocked(beam))throw new IllegalArgumentException("多层桥横梁侵入既有通行空间，请调整层间净空");
+      if(ground.blocked(beam)){ground.missingSupport(at.distance(),"多层桥共用横梁缺少净空，已省略整组支撑");return List.of();}
       parts.add(beam);
     }
     String model=MODEL+upper.settings().options().infrastructure().bridge().name();

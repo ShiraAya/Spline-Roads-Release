@@ -32,5 +32,6 @@
   "key.splineroads.street_planner": "Street network planner",
   "key.splineroads.manual_planner": "Manual road planning map",
   "key.categories.splineroads": "Spline Roads",
-  "item.splineroads.elevated_access_creator": "Elevated Access Point Creator"
+  "item.splineroads.elevated_access_creator": "Elevated Access Point Creator",
+  "item.splineroads.junction_point_creator": "Junction Point Creator"
 }

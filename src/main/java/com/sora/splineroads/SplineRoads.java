@@ -66,6 +66,7 @@ public final class SplineRoads {
   public static final RegistryObject<Item> GANTRY_EDITOR = ITEMS.register("gantry_editor", GantryTool::new);
   public static final RegistryObject<Item> SPLITTER=ITEMS.register("road_splitter",RoadSplitTool::new);
   public static final RegistryObject<Item> ELEVATED_POINT=ITEMS.register("elevated_access_creator",ElevatedPointTool::new);
+  public static final RegistryObject<Item> JUNCTION_POINT=ITEMS.register("junction_point_creator",JunctionPointTool::new);
   public static final RegistryObject<Item> ATTACHED_POINT=ITEMS.register("endpoint_creator",AttachedPointTool::new);
   public static final RegistryObject<Item> LANE_POINT=ITEMS.register("lane_point_tool",LanePointTool::new);
   public static final RegistryObject<Item> LANE_LINES=ITEMS.register("lane_line_editor",LaneLineTool::new);
@@ -81,7 +82,7 @@ public final class SplineRoads {
                   .icon(() -> new ItemStack(CONNECTOR.get()))
                   .displayItems(
                       (p, o) -> {
-                        o.accept(NODE_ITEM.get());o.accept(ROAD_BLOCK_ITEM.get());o.accept(ROAD_SLAB_ITEM.get());o.accept(ATTACHED_POINT.get());o.accept(ELEVATED_POINT.get());o.accept(SPLITTER.get());o.accept(LANE_POINT.get());
+                        o.accept(NODE_ITEM.get());o.accept(ROAD_BLOCK_ITEM.get());o.accept(ROAD_SLAB_ITEM.get());o.accept(JUNCTION_POINT.get());o.accept(ATTACHED_POINT.get());o.accept(ELEVATED_POINT.get());o.accept(SPLITTER.get());o.accept(LANE_POINT.get());
                         o.accept(CONNECTOR.get());
                         o.accept(RAILBED_CONNECTOR.get());
                         o.accept(RAMP_CONNECTOR.get());

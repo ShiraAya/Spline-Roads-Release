@@ -33,6 +33,7 @@ public final class RoadTerrainModels {
   private static final ModelProperty<List<BakedQuad>> QUADS=new ModelProperty<>();
   private static final ModelProperty<List<BakedQuad>> COVERS=new ModelProperty<>();
   private static final ModelProperty<Integer> FILL_FACES=new ModelProperty<>();
+  private static final ModelProperty<Double> BLOCK_BOTTOM=new ModelProperty<>();
   private static final ChunkRenderTypeSet SOLID=ChunkRenderTypeSet.of(RenderType.solid());
   private static final Map<Section,Map<Integer,ModelData>> snapshots=new ConcurrentHashMap<>();
   // Only snapshots/enabled/assets are read outside the client thread.
@@ -102,7 +103,11 @@ public final class RoadTerrainModels {
       // A saved road can cross retained or player-replaced ordinary blocks.
       // They must emit the same per-cell road publication as SR proxies;
       // otherwise completeCells rejects the entire native section indefinitely.
-      if(!id.getNamespace().equals(SplineRoads.ID))return new TerrainModel(original,true);
+      if(!id.getNamespace().equals(SplineRoads.ID)){
+        var terrain=new TerrainModel(original,true);
+        return RoadFabricModels.wrap(original,terrain,data->data.get(QUADS),RoadTerrainModels::exposedFill,
+            data->data.get(QUADS)!=null&&!data.get(QUADS).isEmpty()||data.get(COVERS)!=null&&!data.get(COVERS).isEmpty()||data.get(BLOCK_BOTTOM)!=null&&data.get(BLOCK_BOTTOM)<0);
+      }
       String name=id.getPath();
       if(name.equals("road_block")||name.equals("road_slab"))return new TerrainModel(new RoadAsphaltModel(original),true);
       if(!Set.of("road_collision","road_infill","road_node").contains(name))return original;
@@ -458,7 +463,7 @@ public final class RoadTerrainModels {
     }
   }
   static boolean coverOnly(ModelData data){var cover=data.get(COVERS);var quads=data.get(QUADS);return cover!=null&&!cover.isEmpty()&&(quads==null||quads.isEmpty());}
-  static List<BakedQuad> exposedFill(List<BakedQuad> base,ModelData data){return exposedFill(exposedFill(base,data.get(COVERS)),data.get(QUADS));}
+  static List<BakedQuad> exposedFill(List<BakedQuad> base,ModelData data){return SidewalkBlockQuads.extend(exposedFill(exposedFill(base,data.get(COVERS)),data.get(QUADS)),data.get(BLOCK_BOTTOM));}
   public static String status(){return (enabled?"terrain":"VBO")+" ("+shaderStatus+"), "+snapshots.size()+" sections, "+
       (waiting.size()+jobs.size())+" terrain tiles queued, "+pending.size()+" publish, "+cache.size()+" cached, "+preparedTiles+" baked / "+cacheHits+" reused; "+RoadTerrainHandoff.status();}
   record Stats(int queued,int active,int cached,int cachedQuads,long baked,long hits,long discarded){}
@@ -582,7 +587,7 @@ public final class RoadTerrainModels {
     }
   }
 
-  public static BakedModel markerModel(BakedModel model){return model instanceof TerrainModel terrain?terrain.baseModel:model;}
+  public static BakedModel markerModel(BakedModel model){model=RoadFabricModels.unwrap(model);return model instanceof TerrainModel terrain?terrain.baseModel:model;}
 
   private static final class TerrainModel extends BakedModelWrapper<BakedModel> {
     private final boolean originalVisible;
@@ -590,6 +595,8 @@ public final class RoadTerrainModels {
     TerrainModel(BakedModel original,boolean originalVisible){super(original);this.baseModel=original;this.originalVisible=originalVisible;}
     @Override public ModelData getModelData(BlockAndTintGetter level,BlockPos pos,BlockState state,ModelData input) {
       input=super.getModelData(level,pos,state,input);
+      double bottom=com.sora.splineroads.world.SidewalkBlockContact.bottom(level,ClientRoads.INDEX,pos,state);
+      if(bottom<0||input.get(BLOCK_BOTTOM)!=null)input=input.derive().with(BLOCK_BOTTOM,bottom).build();
       var fill=input.get(com.sora.splineroads.world.RoadFillEntity.MATERIAL);
       if(fill!=null){int visible=0;for(var direction:Direction.values()){var adjacent=pos.relative(direction);if(!level.getBlockState(adjacent).isSolidRender(level,adjacent))visible|=1<<direction.ordinal();}input=input.derive().with(RoadAsphaltModel.POSITION,pos.immutable()).with(FILL_FACES,visible).build();}
       var section=new Section(pos.getX()>>4,pos.getY()>>4,pos.getZ()>>4);

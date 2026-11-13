@@ -47,5 +47,26 @@ final class InterchangeEndpoints {
     }
   }
 
+  /** Keep the confirmed node when a newly created range marker was derived from a sliced mesh.
+   * Existing markers never use this path. Matching a block address alone is insufficient: another
+   * real endpoint in that block must retain its own position and orientation. */
+  static Node generated(long[] points, java.util.List<Node> anchors, BlockPos pos, Node fallback) {
+    for (int i = 0; i < points.length && i < anchors.size(); i++) {
+      if (points[i] != pos.asLong()) continue;
+      Node anchor = anchors.get(i);
+      var a = anchor.position(); var b = fallback.position();
+      if (sameCoordinate(a.x(), b.x()) && sameCoordinate(a.y(), b.y())
+          && sameCoordinate(a.z(), b.z())
+          && Math.abs(Math.IEEEremainder(anchor.yaw() - fallback.yaw(), 360)) <= 1e-8
+          && Math.abs(anchor.grade() - fallback.grade()) <= 1e-8) return anchor;
+    }
+    return fallback;
+  }
+
+  private static boolean sameCoordinate(double a, double b) {
+    return Double.isFinite(a) && Double.isFinite(b)
+        && Math.abs(a - b) <= Math.max(1e-12, 8 * Math.max(Math.ulp(a), Math.ulp(b)));
+  }
+
   private InterchangeEndpoints() {}
 }

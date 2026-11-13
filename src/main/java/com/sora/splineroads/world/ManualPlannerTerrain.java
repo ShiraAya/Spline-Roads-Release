@@ -39,7 +39,7 @@ final class ManualPlannerTerrain implements AutoCloseable {
     for(long key:chunks){var pos=new ChunkPos(key);if(Math.hypot(pos.x*16+8-centerX,pos.z*16+8-centerZ)>2080)continue;sampled.remove(key);waiting.remove(pos);if(!pending.containsKey(pos))waiting.addFirst(pos);}
     total=sampled.size()+waiting.size()+pending.size();
   }
-  static CompoundTag nodeTag(NodeEntity n){var item=new CompoundTag();item.putLong("Pos",n.getBlockPos().asLong());item.put("Node",RoadRecord.writeNode(n.node()));return item;}
+  static CompoundTag nodeTag(NodeEntity n){var item=new CompoundTag();item.putLong("Pos",n.getBlockPos().asLong());item.put("Node",RoadRecord.writeNode(n.node()));item.putBoolean("JunctionMarker",n.junctionSource!=null&&AutoJunctions.center(RoadData.get((ServerLevel)n.getLevel()),n.getBlockPos())==null);return item;}
   void tick(){
     if(closed)return;
     if(Math.hypot(player.getX()-centerX,player.getZ()-centerZ)>=16)configure(radius);
@@ -71,7 +71,7 @@ final class ManualPlannerTerrain implements AutoCloseable {
       colors[z*16+x]=0xff000000|(((color&255)*shade/255)<<16)|((((color>>8)&255)*shade/255)<<8)|(((color>>16)&255)*shade/255);heights[z*16+x]=y+1;
     }
     var t=new CompoundTag();t.putString("Kind","manualTerrain");t.putUUID("PlannerSession",session);t.putInt("ChunkX",origin.x);t.putInt("ChunkZ",origin.z);t.putIntArray("Colors",colors);t.putIntArray("Heights",heights);t.putInt("Loaded",sampled.size()+1);t.putInt("Total",total);
-    nodes.entrySet().removeIf(e->new ChunkPos(BlockPos.of(e.getKey())).equals(origin));var found=new ListTag();for(var be:chunk.getBlockEntities().values())if(be instanceof NodeEntity n){var item=new CompoundTag();item.putLong("Pos",n.getBlockPos().asLong());item.put("Node",RoadRecord.writeNode(n.node()));nodes.put(n.getBlockPos().asLong(),item);found.add(item);}t.put("Nodes",found);RoadNetwork.open(player,t);
+    nodes.entrySet().removeIf(e->new ChunkPos(BlockPos.of(e.getKey())).equals(origin));var found=new ListTag();for(var be:chunk.getBlockEntities().values())if(be instanceof NodeEntity n){var item=nodeTag(n);nodes.put(n.getBlockPos().asLong(),item);found.add(item);}t.put("Nodes",found);RoadNetwork.open(player,t);
   }
   private void releasePending(){for(var pos:pending.keySet())level.getChunkSource().removeRegionTicket(TICKET,pos,0,session);pending.clear();}
   @Override public void close(){closed=true;releasePending();waiting.clear();sampled.clear();nodes.clear();}

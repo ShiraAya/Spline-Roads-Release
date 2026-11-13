@@ -11,10 +11,11 @@ public final class SmartSigns {
   public static final List<Mode> STYLES=List.of(Mode.EMPTY,Mode.EXIT_SIGN,Mode.SPEED_LIMIT,Mode.IC_JCT,Mode.LANE_INDICATOR);
   public static String styleLabel(Mode mode){return switch(mode){case EXIT_AUTO,EXIT_SIGN->"出口预告龙门架";case SPEED_LIMIT->"限速龙门架";case LANE_INDICATOR->"车道指示龙门架";case IC_JCT->"JCT/IC预告龙门架";default->"空龙门架";};}
   /** Persisted world-space mount, derived only from the owning fork's saved geometry. */
-  public record Support(V foot,V right,V front,boolean paired,int cantileverSide,double gantrySpan){
+  public record Support(V foot,V right,V front,boolean paired,int cantileverSide,double gantrySpan,Double boardCenter){
+    public Support(V foot,V right,V front,boolean paired,int cantileverSide,double gantrySpan){this(foot,right,front,paired,cantileverSide,gantrySpan,null);}
     public Support(V foot,V right,V front,boolean paired,int cantileverSide){this(foot,right,front,paired,cantileverSide,0);}
     public Support(V foot,V right,V front,boolean paired){this(foot,right,front,paired,0);}
-    public Support {if(!Double.isFinite(gantrySpan)||Math.abs(gantrySpan)>256||cantileverSide< -1||cantileverSide>1||foot==null||right==null||front==null||!RoadGeometry.finite(foot.x(),foot.y(),foot.z(),right.x(),right.y(),right.z(),front.x(),front.y(),front.z())||Math.abs(right.horizontalLength()-1)>.001||Math.abs(front.horizontalLength()-1)>.001||Math.abs(right.dot(front))>.001||Math.abs(right.y())>.001||Math.abs(front.y())>.001)throw new IllegalArgumentException("无效的路杆安装位置");}
+    public Support {if(boardCenter!=null&&(!Double.isFinite(boardCenter)||Math.abs(boardCenter)>256))throw new IllegalArgumentException("无效的标牌中心位置");if(!Double.isFinite(gantrySpan)||Math.abs(gantrySpan)>256||cantileverSide< -1||cantileverSide>1||foot==null||right==null||front==null||!RoadGeometry.finite(foot.x(),foot.y(),foot.z(),right.x(),right.y(),right.z(),front.x(),front.y(),front.z())||Math.abs(right.horizontalLength()-1)>.001||Math.abs(front.horizontalLength()-1)>.001||Math.abs(right.dot(front))>.001||Math.abs(right.y())>.001||Math.abs(front.y())>.001)throw new IllegalArgumentException("无效的路杆安装位置");}
   }
   public record Key(UUID road,int slot,int flow){
     public Key {if(road==null||slot<0||slot>=RoadGantry.MAX_SLOTS||Math.abs(flow)!=1)throw new IllegalArgumentException("无效的龙门架标识");}
@@ -154,7 +155,7 @@ public final class SmartSigns {
         double spacing=Math.min(4.7,Math.abs(span)/count);
         width=Math.min(width,spacing-.25);
         x=span/2+(i-(count-1)/2.0)*spacing;
-        if(count==1&&branch.id().equals("elevated"))x=Math.min(0,span)+width/2+.125;
+        if(count==1&&branch.id().equals("elevated"))x=state.support().boardCenter()!=null?state.support().boardCenter():Math.min(0,span)+width/2+.125;
       }
       boards.add(new Board(branch.id(),x,width,3.4));accessoryBoard(boards,state,branch.id(),x,Math.min(3.95,width-.15),3.53);
     }

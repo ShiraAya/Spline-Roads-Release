@@ -1,0 +1,138 @@
+package com.sora.splineroads.world;
+
+import com.sora.splineroads.core.*;
+import com.sora.splineroads.core.RoadGeometry.*;
+import java.util.*;
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.*;
+
+/** Reclaim only unchanged, still connected continuations recorded by this assembly. */
+final class ContinuousReclaim {
+  /** Only this transaction may snapshot its own incidental normalization of an
+   * ordinary source that was byte-for-byte unchanged immediately before commit.
+   * This does not authorize reclamation or relax any later topology check. */
+  static Set<UUID> snapshotCandidates(RoadData data,CompoundTag tag,UUID owner){
+    var result=new HashSet<UUID>();
+    for(var value:tag.getList("ContinuousSources",Tag.TAG_COMPOUND)){
+      var q=(CompoundTag)value;if(!q.getBoolean("Detached"))continue;
+      var saved=RoadRecord.load(q.getCompound("Road"));var built=data.index.roads.get(saved.id());
+      if(built==null)continue;var live=built.record;
+      if(live.assembly()==null&&live.junction()==null&&live.toll()==null&&owner.equals(live.owner())
+          &&saved.header().equals(live.header()))result.add(live.id());
+    }
+    return Set.copyOf(result);
+  }
+  static boolean eligible(CompoundTag tag,UUID id){
+    for(Tag value:tag.getList("ContinuousSources",Tag.TAG_COMPOUND)){
+      var q=(CompoundTag)value;
+      if(q.getCompound("Road").hasUUID("Id")&&q.getCompound("Road").getUUID("Id").equals(id))
+        return !q.getBoolean("Detached")||q.getBoolean("Reclaimable");
+    }return false;
+  }
+
+  static void refresh(RoadData data,CompoundTag tag){
+    var result=new ListTag();var candidates=new HashMap<UUID,CompoundTag>();
+    var records=new HashMap<UUID,RoadRecord>();var roots=new HashSet<UUID>();var axes=new HashMap<UUID,Integer>();
+    for(Tag value:tag.getList("ContinuousSources",Tag.TAG_COMPOUND)){
+      var q=((CompoundTag)value).copy();q.remove("Reclaimable");
+      var old=RoadRecord.load(q.getCompound("Road"));var built=data.index.roads.get(old.id());
+      var live=built==null?null:built.record;axes.put(old.id(),q.getInt("Axis"));
+      // Old descriptors left unused captured neighbours active. Only a live
+      // member of this saved parent may refresh an active source in place.
+      // Brand-new captures have no parent ID and are not reclassified here.
+      boolean outside=tag.hasUUID("Id")&&!q.getBoolean(ContinuousService.LOGICAL)
+          &&(live==null||!InterchangeJunctions.belongs(data,tag.getUUID("Id"),live.assembly()));
+      if(q.getBoolean("Detached")||outside){
+        q.putBoolean("Detached",true);
+        // Retain missing/edited provenance as a protected range, never recreate it.
+        if(live!=null&&live.assembly()==null&&live.junction()==null&&live.toll()==null
+            &&live.owner().equals(old.owner())&&(!tag.hasUUID("Owner")||live.owner().equals(tag.getUUID("Owner")))
+            &&RoadContinuity.eligible(live.caps(0).mesh())&&unchanged(q,old,live)){
+          candidates.put(old.id(),q);records.put(old.id(),live);
+        }
+      }else{
+        if(live!=null&&!q.getBoolean(ContinuousService.LOGICAL)){var refreshed=ContinuousRoads.updatedSource(old,live);q.put("Road",refreshed.header());
+          if(tag.hasUUID("Id")&&InterchangeJunctions.belongs(data,tag.getUUID("Id"),live.assembly())){roots.add(old.id());records.put(old.id(),refreshed);}}
+      }
+      result.add(q);
+    }
+    ContinuousService.refresh(data,tag,roots,records,axes);
+    var reached=new HashSet<UUID>(roots);boolean changed;
+    do{changed=false;
+      for(var item:candidates.entrySet())if(!reached.contains(item.getKey())){
+        var road=records.get(item.getKey());
+        for(UUID prior:List.copyOf(reached)){
+          if(!Objects.equals(axes.get(prior),axes.get(road.id())))continue;
+          var other=records.get(prior);BlockPos shared=shared(road,other);if(shared==null)continue;
+          var topology=data.index.atNode(shared);
+          if(topology.size()!=2||!topology.contains(road.id())||!topology.contains(prior))continue;
+          if(!road.owner().equals(other.owner())||!sameProfile(road,other))continue;
+          V port=road.a().equals(shared)?road.start().position():road.end().position();
+          if(!RoadContinuity.compatible(road.caps(0).mesh(),other.caps(0).mesh(),port))continue;
+          reached.add(road.id());item.getValue().putBoolean("Reclaimable",true);
+          item.getValue().put("Road",road.header());changed=true;break;
+        }
+      }
+    }while(changed);
+    tag.put("ContinuousSources",result);
+  }
+
+  private static BlockPos shared(RoadRecord a,RoadRecord b){
+    if(a.a().equals(b.a())||a.a().equals(b.b()))return a.a();
+    return a.b().equals(b.a())||a.b().equals(b.b())?a.b():null;
+  }
+  private static RoadRecord profile(RoadRecord road){
+    var tag=road.header();var infra=tag.getCompound("Settings").getCompound("Infrastructure");
+    // sameSettings already removes generated automatic station entries. Their
+    // fixed/list mode is generated by range slicing too; authored edits remain.
+    if(infra.getList("GantryEdits",Tag.TAG_COMPOUND).stream().allMatch(v->((CompoundTag)v).getBoolean("Automatic")))
+      infra.putBoolean("FixedStations",false);
+    return RoadRecord.load(tag);
+  }
+  private static boolean sameProfile(RoadRecord a,RoadRecord b){return ContinuousRoads.sameSettings(profile(a),profile(b));}
+
+  static boolean unchanged(CompoundTag item,RoadRecord saved,RoadRecord live){
+    if(saved.header().equals(live.header()))return true;
+    if(item.getBoolean("DetachedExact"))return false;
+    // Pre-fix saves kept the range descriptor rather than the committed donor.
+    // Only this known materialization is accepted; all other fields stay exact.
+    var fragment=saved.fragment();
+    if(fragment==null||live.fragment()!=null||fragment.connection()!=RoadSlicing.Connection.CONTINUOUS
+        ||!fragment.supports().isEmpty()||!fragment.curveAnchors().isEmpty()
+        ||!fragment.applied().points().isEmpty()||!fragment.applied().spans().isEmpty()
+        ||!saved.caps(0).mesh().samples().equals(live.caps(0).mesh().samples()))return false;
+    var a=saved.header();var b=live.header();var old=a.getCompound("Settings");var now=b.getCompound("Settings");
+    var ends=saved.settings().options().ends();var current=live.settings().options().ends();
+    double length=saved.caps(0).mesh().length();
+    if(ends.start()!=null||ends.end()!=null||ends.port()!=null||ends.persistent()||ends.startHold()!=0||ends.endHold()!=0
+        ||!current.equals(RoadTransitions.Ends.NONE)||ends.paintPhase()!=0
+        ||Math.abs(ends.trimmedStart()-fragment.origin())>1e-9
+        ||Math.abs(ends.trimmedEnd()-(fragment.total()-fragment.origin()-length))>1e-9)return false;
+    old.remove("TrimmedStart");old.remove("TrimmedEnd");
+    var oi=old.getCompound("Infrastructure");var ni=now.getCompound("Infrastructure");
+    if(oi.getBoolean("FixedStations")&&!ni.getBoolean("FixedStations")
+        &&ni.getList("GantryEdits",Tag.TAG_COMPOUND).isEmpty()
+        &&oi.getList("GantryEdits",Tag.TAG_COMPOUND).stream().allMatch(v->((CompoundTag)v).getBoolean("Automatic"))){
+      oi.putBoolean("FixedStations",false);oi.put("GantryEdits",new ListTag());
+    }
+    var md=saved.settings().options().lanePoints();var mesh=live.mesh();
+    var snapped=md.points().stream().map(p->p.automatic()
+        ?LanePoints.point(p.id(),p.origin(),mesh,p.origin()==LanePoints.Origin.AUTOMATIC_START?0:mesh.length(),p.lane()):p).toList();
+    old.put("LanePointsV2",RoadRecord.writeSettings(saved.settings().options(saved.settings().options().lanePoints(md.points(snapped)))).getCompound("LanePointsV2"));
+    a.remove("Alignment");b.remove("Alignment");a.remove("Slice");
+    return a.equals(b);
+  }
+
+  /** A deleted, edited or disconnected old donor remains outside our authority. */
+  static void requireClear(CompoundTag tag,int axis,Mesh generated){
+    V origin=generated.first().center(),direction=generated.last().center().sub(origin).horizontalUnit();
+    double total=generated.last().center().sub(origin).dot(direction);
+    for(Tag value:tag.getList("ContinuousSources",Tag.TAG_COMPOUND)){
+      var q=(CompoundTag)value;if(q.getInt("Axis")!=axis||!q.getBoolean("Detached")||q.getBoolean("Reclaimable"))continue;
+      var road=RoadRecord.load(q.getCompound("Road"));double a=road.start().position().sub(origin).dot(direction),b=road.end().position().sub(origin).dot(direction);
+      if(Math.min(Math.max(a,b),total)-Math.max(Math.min(a,b),0)>1e-5)
+        throw new IllegalArgumentException("原立交外侧余段已修改、删除或不再连续，不能自动占用；请先单独处理该道路");
+    }
+  }
+  private ContinuousReclaim(){}
+}

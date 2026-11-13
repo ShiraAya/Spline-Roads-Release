@@ -82,8 +82,12 @@ public final class LaneDeck {
       }
       holes.add(new Span(lo,hi,false,false));
     }
+    // Access gaps use the authored host axis. A one-sided auxiliary lane
+    // shifts the physical ribbon centre; transform its median hole just as
+    // the selected lane holes above, without moving the saved reservation.
+    double gapShift=RoadStructures.sample(raw,sample.distance()).center().sub(sample.center()).dot(sample.left());
     for(var access:mesh.settings().options().lanePoints().access())for(var gap:access.gaps())
-      holes.add(gap.at(interval)?new Span(gap.low(),gap.high(),false,false):new Span(gap.low(),gap.low(),false,false));
+      holes.add(gap.at(interval)?new Span(gap.low()+gapShift,gap.high()+gapShift,false,false):new Span(gap.low()+gapShift,gap.low()+gapShift,false,false));
     for(int side:new int[]{-1,1})if(RoadsideBypass.crossing(mesh,interval,side)){
       double inner=RoadsideBypass.inner(mesh,sample,side),outer=RoadsideBypass.outer(mesh,sample,side);
       holes.add(new Span(Math.min(side*inner,side*outer),Math.max(side*inner,side*outer),false,false));

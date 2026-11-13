@@ -100,6 +100,9 @@ public final class RoadSplitGeometry {
       double lo=r.cuts().stream().mapToDouble(c->Math.min(c.begin(),c.end())).min().orElseThrow();
       double hi=r.cuts().stream().mapToDouble(c->Math.max(c.begin(),c.end())).max().orElseThrow();
       for(var extra:r.additions()){lo=Math.min(lo,Math.min(extra.station(),extra.end())-extra.transition());hi=Math.max(hi,Math.max(extra.station(),extra.end())+extra.transition());}
+      // A continuous access may borrow beyond this record. Only cuts inside its
+      // actual domain sever that access; keep the original equation when shifting.
+      lo=Math.max(0,lo);hi=Math.min(mesh.length(),hi);
       if(hi<=from||lo>=to)continue;
       if(lo<from-1e-6||hi>to+1e-6)throw new IllegalArgumentException("分割范围穿过高架出入口，请先删除该连接");
       access.add(ElevatedAccess.shifted(r,-from));
@@ -114,10 +117,18 @@ public final class RoadSplitGeometry {
     var tunnels=streetscape.tunnels().stream().filter(v->v.to()>from&&v.from()<to).map(v->new RoadStreetscape.Span(Math.max(from,v.from())-from,Math.min(to,v.to())-from)).toList();
     var crossings=streetscape.crossings().stream().filter(v->v.end()>from&&v.start()<to).map(v->new RoadsideBypass.Span(v.side(),v.start()-from,v.from()-from,v.to()-from,v.end()-from,v.delta())).toList();
     s=s.options(o.ends(o.ends().trim(from,mesh.length()-to)).lanePoints(laneData).attachments(attachments).infrastructure(o.infrastructure().fixedStations(edits)).streetscape(streetscape.raisedSpans(raised).sideStructures(streetscape.sides().slice(from,to)).tunnels(tunnels).crossings(crossings)));
+    var curveAnchors=new ArrayList<RoadProfile.Control>();
+    if(s.mode()==Mode.CURVE||!o.routing().controls().isEmpty()){
+      var stations=new TreeMap<Double,UUID>();
+      for(var c:o.routing().controls()){double d=horizontal(raw,c.position());if(d>from+2&&d<to-2)stations.put(d,c.id());}
+      if(stations.isEmpty()&&length>4)stations.put((from+to)/2,UUID.nameUUIDFromBytes((id+":fragment-curve").getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+      for(var e:stations.entrySet())curveAnchors.add(new RoadProfile.Control(e.getValue(),RoadSlicing.at(raw,e.getKey()).center()));
+      s=s.options(s.options().route(o.routing().controls(curveAnchors).through(true)));
+    }
     var rawSlice=RoadSlicing.slice(raw,from,to,s);var shapedSlice=RoadSlicing.slice(mesh,from,to,s);
     var previous=road.fragment();var fragment=new RoadSlicing.Fragment(previous==null?road.id():previous.source(),(previous==null?0:previous.origin())+from,previous==null?mesh.length():previous.total(),mode,attachments,shapedSlice.geometry());
     var parts=new ArrayList<Part>();for(var p:rebuildFurniture?supports(mesh,road.structures()):road.structures()){Part clipped=part(mesh,p,from,to);if(clipped!=null)parts.add(clipped);}
-    fragment=new RoadSlicing.Fragment(fragment.source(),fragment.origin(),fragment.total(),fragment.connection(),fragment.applied(),fragment.geometry(),supports(mesh,parts));
+    fragment=new RoadSlicing.Fragment(fragment.source(),fragment.origin(),fragment.total(),fragment.connection(),fragment.applied(),fragment.geometry(),supports(mesh,parts),curveAnchors);
     int caps=(from==0?road.endCaps()&1:0)|(to==mesh.length()?road.endCaps()&2:0);
     return new RoadRecord(id,road.owner(),a,b,start,end,s,road.automatic(),road.clearance(),parts,caps,road.buildVersion(),road.assembly(),rawSlice.mesh().samples(),(road.furniturePhase()==null?RoadFurniture.Phase.DEFAULT:road.furniturePhase()).shift(from),null,null,fragment);
   }

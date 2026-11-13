@@ -78,6 +78,12 @@ public final class Interchanges {
     validateMainStyles(t);
     return InterchangeJunctions.applyEdits(InterchangeJunctions.elevationDefaults(ContinuousRoads.plan(t,Interchanges::planBase),t),t);
   }
+  static InterchangePlanner.Plan confirmedPlan(CompoundTag t,CompoundTag command){
+    validateMainStyles(t);var fixed=ConfirmedInterchangeFit.candidate(t,command);
+    // Validate the exact submitted endpoints without repeating optional fitting.
+    var plan=ContinuousRoads.confirmed(t,planBase(fixed));
+    return InterchangeJunctions.applyEdits(InterchangeJunctions.elevationDefaults(plan,t),t);
+  }
   private static void validateMainStyles(CompoundTag t) {
     for(String key:List.of("Main1","Main2","Main3"))if(t.contains(key)){
       var bridge=RoadRecord.readSettings(t.getCompound(key)).options().infrastructure().bridge();
@@ -199,7 +205,7 @@ public final class Interchanges {
       if(id==null)ContinuousRoads.capture(data,t);
       else if(t.contains("ContinuousSources")){
         // Keep point/paint edits made on generated mains when rebuilding the assembly.
-        var refreshed=new ListTag();for(Tag value:t.getList("ContinuousSources",Tag.TAG_COMPOUND)){var q=((CompoundTag)value).copy();var original=RoadRecord.load(q.getCompound("Road"));var current=data.index.roads.get(original.id());if(q.getBoolean("Detached")&&current==null)continue;if(current!=null)q.put("Road",q.getBoolean("Detached")&&current.record.assembly()==null?current.record.header():ContinuousRoads.updatedSource(original,current.record).header());refreshed.add(q);}t.put("ContinuousSources",refreshed);
+        ContinuousReclaim.refresh(data,t);
       }
       if (id != null) {t.putUUID("Id", id);InterchangeJunctions.captureEdits(data,id,t);}
       return t;
@@ -324,7 +330,9 @@ public final class Interchanges {
       validateMainStyles(t);
       if(t.contains("Corridor"))HostAxes.normalizeCorridor(t);
       if(player!=null&&command.contains("SourceAxesHash")&&command.getInt("SourceAxesHash")!=HostAxes.signature(t))throw new IllegalArgumentException("主路曲线已改变，请重新打开生成器查看预览");
-      var plan = t.contains("Corridor")?Corridors.resolve(level,player,t):plan(t);
+      var plan = t.contains("Corridor")?Corridors.resolve(level,player,t):
+          player!=null&&ConfirmedInterchangeFit.eligible(t)&&read(t.getCompound("Options")).adjustEndpoints()
+              ?confirmedPlan(t,command):plan(t);
       UUID group = t.hasUUID("Id") ? t.getUUID("Id") : UUID.randomUUID(),
           owner =
               t.hasUUID("Owner")
@@ -358,12 +366,8 @@ public final class Interchanges {
         }
       }
       for(var leg:plan.legs()){UUID source=ContinuousRoads.sourceId(leg.name());if(source!=null){var old=data.index.roads.get(source);if(old!=null&&player!=null)RoadData.requireOwner(player,old.record.owner());removed.add(source);}}
-      // 1.0.31 saved the unwanted tails as detached ordinary roads. Retire only
-      // records explicitly listed by this assembly, in the same atomic edit.
-      for(var source:ContinuousRoads.sources(t))if(ContinuousSections.detached(t,source.road().id())){
-        var old=data.index.roads.get(source.road().id());
-        if(old!=null){if(player!=null)RoadData.requireOwner(player,old.record.owner());removed.add(old.record.id());}
-      }
+      // Only unchanged recorded continuations accepted into this plan are replaced.
+      var committedContinuousLimits=ContinuousRoads.committedLimits(t,plan.anchors());
       ListTag proposedNodes = new ListTag();
       plan.anchors().forEach(node -> proposedNodes.add(RoadRecord.writeNode(node)));
       boolean adjust = read(t.getCompound("Options")).adjustEndpoints();
@@ -384,7 +388,8 @@ public final class Interchanges {
         Node target = plan.anchors().get(i);
         boolean changed = !endpoint.node().equals(target);
         if (!changed && endpoint.marker() != null) continue;
-        if(changed&&ContinuousRoads.virtual(t,i,target)){t.putBoolean("VirtualRange",true);continue;}
+        if(changed&&ContinuousRoads.virtual(t,i,target)){points[i]=BlockPos.containing(target.position().x(),target.position().y(),target.position().z()).asLong();continue;}
+        BlockPos outer=ContinuousRoads.physicalEnd(t,i,target);if(!outer.equals(from)){from=outer;var marker=RoadData.requireNode(level,from,player);endpoint=new InterchangeEndpoints.Endpoint(marker.constructionNode(),marker,marker.saveWithoutMetadata());changed=!endpoint.node().equals(target);}
         if (changed && !adjust) throw new IllegalArgumentException("未允许调整端点");
         if(changed)SharedRoadEndpoints.stage(data,level,player,from,endpoint.node(),target,sharedChanges,removed);
         V p = target.position();
@@ -423,6 +428,9 @@ public final class Interchanges {
             if(a.position().distance(source.start().position())<1e-6)pa=source.a();
             if(b.position().distance(source.end().position())<1e-6)pb=source.b();
             for(var move:moves){if(pa.equals(move.from()))pa=move.to();if(pb.equals(move.from()))pb=move.to();}
+            // A sliced source position may straddle an integer by a few ulps.
+            // The confirmed marker address takes precedence over that derived source address.
+            pa=anchor(points,t,a.position(),pa);pb=anchor(points,t,b.position(),pb);
             record=new RoadRecord(roadId,source.owner(),pa,pb,a,b,mesh.settings(),source.automatic(),source.clearance(),List.of(),source.endCaps(),source.buildVersion(),ContinuousRoads.donor(leg.name())?null:group,mesh.samples(),source.furniturePhase());
           } else record=record.withAttachments(com.sora.splineroads.core.RoadAttachments.Data.EMPTY);
           if(leg.name().equals(DoubleTrumpetPlanner.CONNECTOR)){
@@ -447,7 +455,7 @@ public final class Interchanges {
       var partitionOwners=ContinuousSections.signOwners(plan,records);
       for(var entry:partitionOwners.entrySet())for(var state:data.smartSigns.road(entry.getKey()))entry.getValue().putIfAbsent(state.key().slot(),entry.getKey());
       var logicalSources=new HashSet<UUID>();for(var leg:plan.legs())if(leg.name().contains("@")&&data.streets.containsKey(ContinuousRoads.sourceId(leg.name())))logicalSources.add(ContinuousRoads.sourceId(leg.name()));
-      ContinuousSections.updateSources(t,plan);
+      ContinuousSections.updateSources(t,ContinuousService.sourcePlan(t,plan));
       // A partition preserves point identities, while its owning road ID may change.
       var pointOwners=new HashMap<UUID,UUID>();for(var r:records)for(var p:r.record.settings().options().lanePoints().points())pointOwners.put(p.id(),r.record.id());
       var remapped=new ArrayList<RoadIndex.Built>();for(var old:data.index.roads.values())if(!removed.contains(old.record.id())){
@@ -485,14 +493,14 @@ public final class Interchanges {
           for (var p : List.of(old.record.a(), old.record.b()))
             if (level.getBlockEntity(p) instanceof NodeEntity) preserved.add(p);
       }
-      if(t.contains("Corridor")){
-        // Generated frontage endpoints are owned by this saved combination.
+      if(t.contains("Corridor")||!ContinuousRoads.sources(t).isEmpty()){
+        // Generated frontage and continuous-range endpoints are owned by this saved combination.
         // Retire obsolete ones in the SAME transaction as its new pavement,
         // including markers preserved by earlier versions after an update.
         for(BlockPos old:new ArrayList<>(preserved)){
           if(records.stream().anyMatch(r->r.record.a().equals(old)||r.record.b().equals(old)))continue;
           if(data.index.atNode(old).stream().anyMatch(id->!removed.contains(id)))continue;
-          if(moves.stream().noneMatch(m->old.equals(m.from())))moves.add(RoadData.NodeMove.retire(old));
+          if(level.getBlockEntity(old) instanceof NodeEntity&&moves.stream().noneMatch(m->old.equals(m.from())))moves.add(RoadData.NodeMove.retire(old));
           preserved.remove(old);
         }
       }
@@ -502,8 +510,7 @@ public final class Interchanges {
         preserved.remove(pos);
       }
       moves.forEach(move -> {if(move.to()!=null)destinations.add(move.to());});
-      for (var p : preserved) if (!destinations.contains(p)) RoadData.requireNode(level, p, player);
-      if(t.contains("Corridor")||plan.legs().stream().anyMatch(l->l.name().contains("@"))){
+      if(t.contains("Corridor")||!ContinuousRoads.sources(t).isEmpty()||plan.legs().stream().anyMatch(l->l.name().contains("@"))){
         if(t.contains("Corridor"))t.put("CorridorRoles",roles);
         // Generated frontage ends are real selectable endpoints for local-road extensions.
         Set<BlockPos> added=new HashSet<>();
@@ -512,13 +519,17 @@ public final class Interchanges {
           if(destinations.contains(pos)){preserved.add(pos);continue;}
           if(level.getBlockEntity(pos) instanceof NodeEntity){RoadData.requireNode(level,pos,player);preserved.add(pos);continue;}
           if(!added.add(pos))continue;
-          Node node=first?record.record.start():record.record.end();
+          Node node=InterchangeEndpoints.generated(points,plan.anchors(),pos,first?record.record.start():record.record.end());
           CompoundTag snapshot=new CompoundTag();snapshot.putUUID("Owner",record.record.owner());
           snapshot.put("Node",RoadRecord.writeNode(node));snapshot.putBoolean("HeightExplicit",true);
-          moves.add(new RoadData.NodeMove(null,pos,node,snapshot));preserved.add(pos);
+          moves.add(new RoadData.NodeMove(null,pos,node,snapshot));destinations.add(pos);preserved.add(pos);
         }
       }
+      for (var p : preserved) if (!destinations.contains(p)) RoadData.requireNode(level,p,player);
+      ContinuousService.prepare(t,plan,records,junctionTags,signTopology,group,owner);
+      var snapshotSources=ContinuousReclaim.snapshotCandidates(data,t,owner);
       data.replaceAssembly(level, player, records, removed, preserved, moves,editLimit(t));
+      if(!committedContinuousLimits.isEmpty())t.put("ContinuousLimits",committedContinuousLimits);
       partitionOwners.forEach(data.smartSigns::splitKeys);
       for(var leg:plan.legs())if(logicalSources.contains(ContinuousRoads.sourceId(leg.name())))data.streets.put(ContinuousSections.id(leg.name()),data.index.roads.get(ContinuousSections.id(leg.name())).record);
       InterchangeJunctions.forget(data,group);
@@ -533,7 +544,17 @@ public final class Interchanges {
       ListTag occupied=new ListTag();
       for(var record:records)if(group.equals(record.record.assembly())&&ContinuousRoads.sources(t).stream().anyMatch(source->source.road().id().equals(record.record.id()))){var range=new CompoundTag();range.putUUID("Road",record.record.id());var source=ContinuousRoads.sources(t).stream().filter(entry->entry.road().id().equals(record.record.id())).findFirst().orElseThrow();int first=source.axis()*2;double start=com.sora.splineroads.core.RoadAttachments.station(record.mesh,plan.anchors().get(first).position()),end=com.sora.splineroads.core.RoadAttachments.station(record.mesh,plan.anchors().get(first+1).position());range.putDouble("From",Math.min(start,end));range.putDouble("To",Math.max(start,end));range.put("Start",RoadRecord.writeNode(new Node(com.sora.splineroads.core.RoadAttachments.at(record.mesh,Math.min(start,end)),0,0)));range.put("End",RoadRecord.writeNode(new Node(com.sora.splineroads.core.RoadAttachments.at(record.mesh,Math.max(start,end)),0,0)));occupied.add(range);}
       t.put("OccupiedRoads",occupied);
-      for(Tag value:t.getList("ContinuousSources",Tag.TAG_COMPOUND)){var source=(CompoundTag)value;var original=RoadRecord.load(source.getCompound("Road"));var current=data.index.roads.get(original.id());if(current!=null){var r=current.record;source.put("Road",ContinuousRoads.updatedSource(original,r).header());}}
+      for(Tag value:t.getList("ContinuousSources",Tag.TAG_COMPOUND)){
+        var source=(CompoundTag)value;var original=RoadRecord.load(source.getCompound("Road"));var current=data.index.roads.get(original.id());
+        if(current!=null){var r=current.record;
+          if(!source.getBoolean("Detached")&&!source.getBoolean(ContinuousService.LOGICAL))source.put("Road",ContinuousRoads.updatedSource(original,r).header());
+          else if(source.getBoolean("Detached")&&(source.getBoolean("Reclaimable")||snapshotSources.contains(original.id())||records.stream().anyMatch(built->built.record.id().equals(original.id())))){
+            source.put("Road",r.header());source.putBoolean("DetachedExact",true);
+          }
+        }
+        source.remove("Reclaimable");
+      }
+      ContinuousService.capture(data,t);
       t.put("SignTopology",signTopology);
       data.interchanges.put(group, t.copy());data.smartSigns.assemblyChanged(group);
       data.setDirty();
@@ -546,11 +567,15 @@ public final class Interchanges {
   }
 
   private static BlockPos anchor(long[] points, CompoundTag t, V p) {
+    return anchor(points,t,p,BlockPos.containing(p.x(),p.y(),p.z()));
+  }
+
+  static BlockPos anchor(long[] points, CompoundTag t, V p, BlockPos fallback) {
     var nodes = t.getList("Nodes", Tag.TAG_COMPOUND);
     for (int i = 0; i < points.length; i++)
       if (RoadRecord.readNode(nodes.getCompound(i)).position().distance(p) < 1e-5)
         return BlockPos.of(points[i]);
-    return BlockPos.containing(p.x(), p.y(), p.z());
+    return fallback;
   }
 
   static void checkExternal(Mesh a, Mesh b) { checkExternal(a,b,null); }

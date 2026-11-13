@@ -32,5 +32,6 @@
   "key.splineroads.street_planner": "自动路网规划",
   "key.splineroads.manual_planner": "手动道路规划地图",
   "key.categories.splineroads": "Spline Roads",
-  "item.splineroads.elevated_access_creator": "高架出入点创建器"
+  "item.splineroads.elevated_access_creator": "高架出入点创建器",
+  "item.splineroads.junction_point_creator": "路口点创建器"
 }

@@ -13,10 +13,15 @@ public final class LatestPlanningTask<T> {
   }
   private final ThreadPoolExecutor executor;
   private final String phase;
+  private final double seconds;
   private Request current;
 
-  public LatestPlanningTask(String name) {
+  public LatestPlanningTask(String name) {this(name,Double.POSITIVE_INFINITY);}
+
+  public LatestPlanningTask(String name,double seconds) {
+    if(!(seconds>0))throw new IllegalArgumentException("Planning budget must be positive");
     phase = name;
+    this.seconds = seconds;
     executor = new ThreadPoolExecutor(1, 1, 30, TimeUnit.SECONDS,
         new ArrayBlockingQueue<>(1), task -> {
           Thread thread = new Thread(task, name);
@@ -43,18 +48,26 @@ public final class LatestPlanningTask<T> {
     request.task = new FutureTask<>(() -> {
       T result = null;
       Throwable failure = null;
-      try (var scope = RoadPlanningBudget.cancellable(phase, request.cancelled::get)) {
+      try (var scope = RoadPlanningBudget.open(phase, seconds, request.cancelled::get)) {
         RoadPlanningBudget.check();
         result = computation.call();
         RoadPlanningBudget.check();
-      } catch (Exception error) {
+      } catch (Throwable error) {
         failure = error;
       } finally {
         RoadQueries.clearThreadCache();
       }
-      if (!request.cancelled.get()) completion.accept(result, failure);
-      synchronized (LatestPlanningTask.this) {
-        if (current == request) current = null;
+      try {
+        if (!request.cancelled.get()) completion.accept(result, failure);
+      } finally {
+        synchronized (LatestPlanningTask.this) {if (current == request) current = null;}
+      }
+      // FutureTask otherwise stores an Error without invoking completion, leaving
+      // the editor permanently busy. Report it to the UI and the log, then retain
+      // the exceptional FutureTask outcome rather than silently swallowing it.
+      if(failure instanceof Error error){
+        System.getLogger("SplineRoads/planning").log(System.Logger.Level.ERROR,phase,error);
+        throw error;
       }
       return null;
     });
