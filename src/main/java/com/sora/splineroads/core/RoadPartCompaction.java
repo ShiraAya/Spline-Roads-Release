@@ -42,10 +42,5 @@ public final class RoadPartCompaction {
     }
     return changed?List.copyOf(out):parts;
   }
-  public static String budgetMessage(UUID road,List<Part> parts,int limit){
-    var counts=new HashMap<String,Integer>();for(var p:parts){String group=p.material()==Material.TACTILE?"盲道":p.material().name().startsWith("WALK_")?"铺装":p.material().name().contains("LEAVES")||p.material().name().endsWith("_LOG")?"树木":p.material().name();counts.merge(group,1,Integer::sum);}
-    String main=counts.entrySet().stream().sorted(Map.Entry.<String,Integer>comparingByValue().reversed().thenComparing(Map.Entry.comparingByKey())).limit(3).map(e->e.getKey()+" "+e.getValue()).reduce((a,b)->a+"、"+b).orElse("无");
-    return "道路 "+road+"：设施 "+parts.size()+"/"+limit+"（"+main+"）；请缩短本段或调整对应设施";
-  }
   private RoadPartCompaction(){}
 }

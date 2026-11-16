@@ -19,7 +19,10 @@ final class RoadMeshSurfaces {
  }
  static RoadSurface.Geometry build(RoadIndex.Built road,Mesh mesh,List<Mesh> joined,List<Mesh> higher,List<Mesh> exactJoined){
   RoadSurface.Geometry surface;
-  if(road.record.junction()!=null)surface=RoadSurface.buildCustom(mesh,higher,joined,road.record.junction().get().paint());
+  if(road.junctionTriangle()){
+    var ref=road.record.junction();
+    surface=RoadSurface.buildJunctionTriangle(mesh,higher,joined,ref.get().paint(),ref.triangleWalls());
+  }else if(road.record.junction()!=null)surface=RoadSurface.buildCustom(mesh,higher,joined,road.record.junction().get().paint());
   else if(road.record.toll()!=null)surface=RoadSurface.buildCustom(mesh,higher,joined,road.record.tollPlan().paint());
   else surface=RoadSurface.build(mesh,higher,joined,new RoadsideBypass(road.mesh,exactJoined));
   var decks=new ArrayList<Mesh>();decks.add(mesh);decks.addAll(joined);

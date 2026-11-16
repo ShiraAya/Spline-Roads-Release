@@ -240,9 +240,7 @@ public final class RoadTerrainModels {
     if(!requested)for(var key:cohorts.keys())cohorts.ready(key,(road,chunk)->true);
   }
   private static void rememberCoverage(){
-    for(var key:cohorts.keys())cohortCoverage.merge(key,cohorts.members(key),(a,b)->{var ids=new HashSet<>(a);ids.addAll(b);return Set.copyOf(ids);});
-    transitionSections.forEach((road,sections)->{for(var section:sections){var key=new Chunk(section.x(),section.z());
-      var ids=new HashSet<>(cohortCoverage.getOrDefault(key,Set.of()));ids.add(road);cohortCoverage.put(key,Set.copyOf(ids));}});
+    cohorts.rememberCoverage(cohortCoverage,transitionSections,section->new Chunk(section.x(),section.z()));
   }
   static boolean transitionReady(com.sora.splineroads.core.RoadRenderMesh.Section region,Set<UUID> members){
     var sections=new HashSet<Section>();for(UUID member:members)sections.addAll(transitionSections.getOrDefault(member,Set.of()));
@@ -561,7 +559,8 @@ public final class RoadTerrainModels {
             }
           }
         }
-        out.add(new BakedQuad(packed,q.getTintIndex(),q.getDirection(),q.getSprite(),q.isShade()));
+        // Clipping an outline must not re-enable proxy-cube AO on its triangles.
+        out.add(new BakedQuad(packed,q.getTintIndex(),q.getDirection(),q.getSprite(),q.isShade(),q.hasAmbientOcclusion()));
       }
       }
     }return List.copyOf(out);
@@ -599,10 +598,7 @@ public final class RoadTerrainModels {
       if(bottom<0||input.get(BLOCK_BOTTOM)!=null)input=input.derive().with(BLOCK_BOTTOM,bottom).build();
       var fill=input.get(com.sora.splineroads.world.RoadFillEntity.MATERIAL);
       if(fill!=null){int visible=0;for(var direction:Direction.values()){var adjacent=pos.relative(direction);if(!level.getBlockState(adjacent).isSolidRender(level,adjacent))visible|=1<<direction.ordinal();}input=input.derive().with(RoadAsphaltModel.POSITION,pos.immutable()).with(FILL_FACES,visible).build();}
-      var section=new Section(pos.getX()>>4,pos.getY()>>4,pos.getZ()>>4);
-      int cell=(pos.getX()&15)|((pos.getZ()&15)<<4)|((pos.getY()&15)<<8);
-      var map=RoadTerrainHandoff.model(section,cell);if(map==null)return withoutRoads(input);
-      ModelData data=map.get(cell);
+      ModelData data=RoadTerrainHandoff.model(pos);
       if(data==null)return withoutRoads(input);
       // A sloping deck lies inside a sealed collision cell. Vanilla's inset
       // face lighting samples that cell's darkness, although the actual road
@@ -645,14 +641,15 @@ public final class RoadTerrainModels {
         // Weighted models consume the RNG while choosing their render layer.
         // Probing with the quad RNG selects a different texture rotation on each face.
         var pos=data.get(RoadAsphaltModel.POSITION);var layerRandom=RandomSource.create(material.getSeed(pos==null?BlockPos.ZERO:pos));
-        base=layer==null||model.getRenderTypes(material,layerRandom,data).contains(layer)?capQuads(model.getQuads(material,side,random,data,layer),cap):List.of();
+        var materialData=pos==null?ModelData.EMPTY:ModelData.builder().with(RoadAsphaltModel.POSITION,pos).build();
+        base=layer==null||model.getRenderTypes(material,layerRandom,materialData).contains(layer)?capQuads(model.getQuads(material,side,random,materialData,layer),cap):List.of();
         var edge=data.get(com.sora.splineroads.world.RoadFillEntity.EDGE);
         var outline=data.get(com.sora.splineroads.world.RoadFillEntity.OUTLINE);
         if(edge!=null&&!edge.isEmpty()||outline!=null&&!outline.isEmpty()){
           base=List.of();
-          if(side==null&&(layer==null||model.getRenderTypes(material,RandomSource.create(material.getSeed(pos==null?BlockPos.ZERO:pos)),data).contains(layer))){
-            var faces=new ArrayList<BakedQuad>(model.getQuads(material,null,random,data,layer));
-            for(var direction:Direction.values())faces.addAll(model.getQuads(material,direction,random,data,layer));
+          if(side==null&&(layer==null||model.getRenderTypes(material,RandomSource.create(material.getSeed(pos==null?BlockPos.ZERO:pos)),materialData).contains(layer))){
+            var faces=new ArrayList<BakedQuad>(model.getQuads(material,null,random,materialData,layer));
+            for(var direction:Direction.values())faces.addAll(model.getQuads(material,direction,random,materialData,layer));
             base=outline!=null&&!outline.isEmpty()?outlineQuads(faces,outline,cap,data.get(FILL_FACES)==null?63:data.get(FILL_FACES)):edgeQuads(faces,edge,cap);
           }
         }
@@ -673,9 +670,13 @@ public final class RoadTerrainModels {
       return roads==null||roads.isEmpty()||base.contains(RenderType.solid())?base:ChunkRenderTypeSet.union(base,SOLID);
     }
     @Override public boolean isCustomRenderer(){return originalVisible&&super.isCustomRenderer();}
-    @Override public boolean useAmbientOcclusion(){return !originalVisible||super.useAmbientOcclusion();}
-    @Override public boolean useAmbientOcclusion(BlockState state){return !originalVisible||super.useAmbientOcclusion(state);}
-    @Override public boolean useAmbientOcclusion(BlockState state,RenderType layer){return !originalVisible||super.useAmbientOcclusion(state,layer);}
+    // Vanilla's tessellator chooses AO for the whole model and ignores the
+    // per-quad flag. A clipped infill is not its solid collision proxy cube;
+    // cube-corner AO darkens otherwise sunlit terrain along every road edge.
+    // Real terrain delegates keep vanilla AO; proxy surfaces use face lighting.
+    @Override public boolean useAmbientOcclusion(){return originalVisible&&super.useAmbientOcclusion();}
+    @Override public boolean useAmbientOcclusion(BlockState state){return originalVisible&&super.useAmbientOcclusion(state);}
+    @Override public boolean useAmbientOcclusion(BlockState state,RenderType layer){return originalVisible&&super.useAmbientOcclusion(state,layer);}
   }
   static List<BakedQuad> capQuads(List<BakedQuad> quads,double cap){
     return quads.stream().map(q->{int[] packed=q.getVertices().clone();for(int i=0;i<4;i++){int at=i*8+1;packed[at]=Float.floatToRawIntBits((float)(Float.intBitsToFloat(packed[at])*cap-(cap>=1?.002:0)));}return new BakedQuad(packed,q.getTintIndex(),q.getDirection(),q.getSprite(),q.isShade(),q.hasAmbientOcclusion());}).toList();

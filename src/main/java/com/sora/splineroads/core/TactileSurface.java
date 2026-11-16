@@ -6,8 +6,8 @@ import java.util.*;
 
 /** Fit the entire tactile ribbon to the visible, sloping sidewalk surface. */
 public final class TactileSurface {
-  private final Map<Long,List<Part>> cells=new HashMap<>();
-  private final Map<Long,List<Part>> neighborhoods=new HashMap<>();
+  private final Map<Long,List<Part>> cells=new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+  private final Map<Long,List<Part>> neighborhoods=new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
   private final Map<Part,List<V>> bases=new IdentityHashMap<>();
   private final Map<Part,Double> tops=new IdentityHashMap<>();
   private final Map<V,Double> grades=new HashMap<>();

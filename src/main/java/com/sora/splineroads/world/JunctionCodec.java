@@ -62,8 +62,17 @@ public final class JunctionCodec {
     if(r.junction()!=null||r.toll()!=null)throw new IllegalArgumentException("单边路口主路快照无效");
     return new OneSidedJunction.Source(r.mesh(),r.structures(),p.getDouble("From"),p.getDouble("To"),p.getInt("Side"));
   }
-  public static CompoundTag writeRef(JunctionPlanner.Ref ref){var t=write(ref.spec());t.putInt("Piece",ref.piece());t.putInt("GeometryVersion",ref.geometryVersion());
+  public static CompoundTag writeRef(JunctionPlanner.Ref ref){return writeRefDetails(ref,write(ref.spec()));}
+  static CompoundTag writeSharedRef(JunctionPlanner.Ref ref,Map<JunctionSpec,Integer> shared,ListTag specs){
+    Integer id=shared.get(ref.spec());if(id==null){id=specs.size();shared.put(ref.spec(),id);specs.add(write(ref.spec()));}
+    var t=new CompoundTag();t.putInt("SpecIndex",id);return writeRefDetails(ref,t);
+  }
+  private static CompoundTag writeRefDetails(JunctionPlanner.Ref ref,CompoundTag t){t.putInt("Piece",ref.piece());t.putInt("GeometryVersion",ref.geometryVersion());
     if(!ref.hostCuts().isEmpty()){var cuts=new ListTag();for(var cut:ref.hostCuts()){var c=new CompoundTag();c.putDouble("From",cut.from());c.putDouble("To",cut.to());c.putInt("Side",cut.side());cuts.add(c);}t.put("HostCuts",cuts);}return t;}
-  public static JunctionPlanner.Ref readRef(CompoundTag t){var cuts=new ArrayList<OneSidedJunction.Cut>();for(var value:t.getList("HostCuts",Tag.TAG_COMPOUND)){var c=(CompoundTag)value;cuts.add(new OneSidedJunction.Cut(c.getDouble("From"),c.getDouble("To"),c.getInt("Side")));}return new JunctionPlanner.Ref(read(t),t.getInt("Piece"),t.contains("GeometryVersion")?t.getInt("GeometryVersion"):21,cuts);}
+  public static JunctionPlanner.Ref readRef(CompoundTag t){return readSharedRef(t,List.of());}
+  static JunctionPlanner.Ref readSharedRef(CompoundTag t,List<JunctionSpec> specs){
+    JunctionSpec spec;if(t.contains("SpecIndex")){int index=t.getInt("SpecIndex");if(!t.contains("SpecIndex",Tag.TAG_INT)||index<0||index>=specs.size())throw new IllegalArgumentException("Invalid shared junction index");spec=specs.get(index);}else spec=read(t);
+    var cuts=new ArrayList<OneSidedJunction.Cut>();for(var value:t.getList("HostCuts",Tag.TAG_COMPOUND)){var c=(CompoundTag)value;cuts.add(new OneSidedJunction.Cut(c.getDouble("From"),c.getDouble("To"),c.getInt("Side")));}return new JunctionPlanner.Ref(spec,t.getInt("Piece"),t.contains("GeometryVersion")?t.getInt("GeometryVersion"):21,cuts);
+  }
   private JunctionCodec() {}
 }

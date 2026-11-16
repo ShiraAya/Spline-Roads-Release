@@ -43,13 +43,14 @@ public final class LaneClosureLandscape {
         if(clear&&Double.isNaN(start))start=a;
         if((!clear||b>=cut.end())&&Double.isFinite(start)){
           double end=clear?b:a;
-          if(end-start>=MIN_GREEN_LENGTH)eligible.add(new Interval(cut.lane(),start,end));
+          double minimum=elevatedAccess(mesh,cut.lane(),(start+end)/2)?1:MIN_GREEN_LENGTH;
+          if(end-start>=minimum)eligible.add(new Interval(cut.lane(),start,end));
           start=Double.NaN;
         }
       }
     }
     var planted=new ArrayList<Interval>();
-    for(var band:bands(raw,eligible))plant(raw,band,ground,result,planted);
+    for(var band:bands(raw,eligible))plant(mesh,raw,band,ground,result,planted);
     for(var band:bands(raw,intervals)){
       for(double a=band.from();a<band.to()-1e-7;a+=1){
         double b=Math.min(a+1,band.to()),station=(a+b)/2;
@@ -107,24 +108,35 @@ public final class LaneClosureLandscape {
     }
     return result;
   }
-  private static void plant(Mesh raw,Band band,Ground ground,List<Part> out,List<Interval> planted){
+  private static void plant(Mesh mesh,Mesh raw,Band band,Ground ground,List<Part> out,List<Interval> planted){
     double from=band.from(),to=band.to();
     if(to-from<=.4)return;
+    boolean continuesBefore=from==raw.first().distance()&&band.slots().stream().allMatch(slot->elevatedAccess(mesh,slot,from-1e-7));
+    boolean continuesAfter=to==raw.last().distance()&&band.slots().stream().allMatch(slot->elevatedAccess(mesh,slot,to+1e-7));
+    double begin=continuesBefore?from:from+.2,end=continuesAfter?to:to-.2;
+    double fadeFrom=continuesBefore?from-2:from,fadeTo=continuesAfter?to+2:to;
     var parts=new ArrayList<Part>();
-    for(double a=from+.2;a<to-.2-1e-7;a+=1){
-      double b=Math.min(to-.2,a+1);
-      parts.addAll(bed(raw,band.slots(),a,b,taper(a,from,to),taper(b,from,to)));
+    for(double a=begin;a<end-1e-7;a+=1){
+      double b=Math.min(end,a+1);
+      parts.addAll(bed(raw,band.slots(),a,b,taper(a,fadeFrom,fadeTo),taper(b,fadeFrom,fadeTo)));
     }
-    for(double d:new double[]{from+.1,to-.1}){
-      var section=cross(raw,band.slots(),d);double depth=Math.max(.5,raw.settings().thickness()+.125);
-      var center=section.center().add(new V(0,-depth,0));var edge=section.left().mul(Math.max(.08,(section.width()-.12)*taper(d<from+1?from+.2:to-.2,from,to)/2));
+    for(boolean first:new boolean[]{true,false}){
+      if(first?continuesBefore:continuesAfter)continue;
+      var section=cross(raw,band.slots(),first?from+.1:to-.1);
+      double depth=Math.max(.5,raw.settings().thickness()+.125);
+      var center=section.center().add(new V(0,-depth,0));
+      var edge=section.left().mul(Math.max(.08,(section.width()-.12)*taper(first?begin:end,fadeFrom,fadeTo)/2));
       parts.add(new Part(center.sub(edge),center.add(edge),.2,depth+.35,false,Material.CONCRETE));
     }
     if(parts.stream().noneMatch(ground::blocked)){
       out.addAll(parts);for(int slot:band.slots())planted.add(new Interval(slot,from,to));
     }else if(band.slots().size()>1){
-      for(int slot:band.slots())plant(raw,new Band(List.of(slot),from,to),ground,out,planted);
+      for(int slot:band.slots())plant(mesh,raw,new Band(List.of(slot),from,to),ground,out,planted);
     }
+  }
+  private static boolean elevatedAccess(Mesh mesh,int slot,double station){
+    return mesh.settings().options().lanePoints().access().stream().anyMatch(reservation->
+        reservation.cuts().stream().anyMatch(cut->cut.lane()==slot&&cut.removed(station)>.999));
   }
   private static double taper(double d,double from,double to){return .2+.8*Settings.smooth(Math.min(1,Math.min(d-from,to-d)/2));}
   private static List<Part> bed(Mesh raw,List<Integer> slots,double a,double b,double wa,double wb){

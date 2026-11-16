@@ -13,7 +13,7 @@ final class RoadUploadArena {
 
   BufferBuilder begin(){return begin(DefaultVertexFormat.NEW_ENTITY);}
   BufferBuilder begin(VertexFormat format) {
-    if (builder == null) builder = new BufferBuilder(initialCapacity);
+    if (builder == null) builder = new RoadVertex.Buffer(initialCapacity);
     // A failed producer may have left an unfinished batch. It must not pin another batch's bytes.
     if (builder.building()) builder.end().release();
     builder.discard();

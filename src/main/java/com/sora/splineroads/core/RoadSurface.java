@@ -246,7 +246,7 @@ public final class RoadSurface {
     paintEdgeJoin=RoadRailJoin.paint(mesh,neighbors.stream().map(n->new RoadRailJoin.Neighbor(n,higherPriority.contains(n))).toList());
     // Preserve the main road's dividers. Only subordinate branch markings are suppressed.
     List<Mesh> dividerCuts = new ArrayList<>(higherPriority.stream()
-        .filter(other->mesh.settings().style().ramp()||!other.settings().style().ramp()).toList());
+        .filter(other->(mesh.settings().style().ramp()||!other.settings().style().ramp())&&!ElevatedAccess.joins(mesh,other)).toList());
     var crossings = RoadJunction.intersections(mesh, neighbors);
     dividerCuts.addAll(crossings);
     for(var neighbor:neighbors)if(RailwayCrossings.any(mesh,neighbor))dividerCuts.add(neighbor);
@@ -469,6 +469,29 @@ public final class RoadSurface {
     var base=new Geometry(List.copyOf(pavement),List.of());
     return paint.isEmpty()&&mesh.settings().options().levelCrossings().isEmpty()?base:custom(base,mesh,paint);
   }
+  public static Geometry buildJunctionTriangle(Mesh mesh,List<Mesh> higher,List<Mesh> joined,List<Face> paint,int walls){
+    var pavement=new ArrayList<Face>();
+    var edge=mesh.last();var top=List.of(mesh.first().center(),edge.at(edge.halfWidth(),0),edge.at(-edge.halfWidth(),0));
+    double thickness=mesh.settings().thickness();
+    for(var polygon:visible(top,new Grid(higher),.025)){
+      pavement.add(new Face(polygon,0xDCDCDC));
+      pavement.add(new Face(polygon.stream().map(v->v.add(new V(0,-thickness,0))).toList(),0xB9B9AD,false,Texture.CONCRETE));
+    }
+    if(walls!=0){
+      var neighbors=new Grid(joined);
+      for(int i=0;i<3;i++)if((walls&(1<<i))!=0){
+        V a=top.get(i),b=top.get((i+1)%3);wall(pavement,b,a,thickness,neighbors);
+      }
+    }
+    var base=new Geometry(List.copyOf(pavement),List.of());
+    if(!mesh.settings().options().levelCrossings().isEmpty())return custom(base,mesh,paint);
+    var clipped=new ArrayList<Face>();
+    for(var f:paint){
+      var points=intersect(f.points(),top);if(!usable(points))continue;
+      clipped.add(new Face(points.stream().map(p->new V(p.x(),top.get(0).y(),p.z())).toList(),f.color()));
+    }
+    return new Geometry(base.pavement(),List.copyOf(clipped));
+  }
   private static void pavement(Mesh mesh,List<Sample> deck,Grid owners,Grid joined,double from,double to,SlabSink sink,List<Face> pavement){
     double thickness=mesh.settings().thickness();
     // Deck and stripes use independent sampling. Long flat deck spans need no extra triangles.
@@ -638,6 +661,10 @@ public final class RoadSurface {
   public static List<List<V>> subtract(List<V> subject, List<V> clip) {
     List<List<V>> result = new ArrayList<>();
     List<V> remaining = ccw(subject), boundary = ccw(clip);
+    // Extending a disjoint triangle's sides cuts an unrelated face into
+    // slivers. A shared edge removes no area either.
+    var overlap=intersectVolume(remaining,boundary);
+    if(overlap.isEmpty())return List.of(subject);
     for (int i = 0; i < boundary.size() && !remaining.isEmpty(); i++) {
       V a = boundary.get(i), b = boundary.get((i + 1) % boundary.size());
       if(a.sub(b).horizontalLength()<1e-9)continue; // Triangle prisms may repeat the tip vertex.

@@ -115,7 +115,18 @@ final class RoadSignalBatch {
   void emit(PoseStack pose,MultiBufferSource buffers,V camera,Function<Texture,RenderType> types,Set<RenderType> used,int light){
     pose.pushPose();pose.translate(origin.x()-camera.x(),origin.y()-camera.y(),origin.z()-camera.z());var transform=pose.last().pose();var normals=pose.last().normal();
     try{for(var entry:data().entrySet()){var type=Objects.requireNonNull(types.apply(entry.getKey()),"Missing SR signal material: "+entry.getKey());used.add(type);var target=buffers.getBuffer(type);var data=entry.getValue();
-      for(int i=0;i<data.length;i+=STRIDE){int color=data[i+3];target.vertex(transform,value(data,i),value(data,i+1),value(data,i+2)).color((color>>16)&255,(color>>8)&255,color&255,255).uv(value(data,i+4),value(data,i+5)).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(normals,value(data,i+6),value(data,i+7),value(data,i+8)).endVertex();}
+      emitVertices(data,transform,normals,target,light);
     }}finally{pose.popPose();}
+  }
+  /** Submit one complete vertex through the consumer's bulk fast path. The same
+   * matrix operations retain the original float bits, including shader wrappers. */
+  static void emitVertices(int[] data,org.joml.Matrix4f transform,org.joml.Matrix3f normals,VertexConsumer target,int light){
+    var position=new org.joml.Vector4f();var normal=new org.joml.Vector3f();
+    for(int i=0;i<data.length;i+=STRIDE){int color=data[i+3];
+      transform.transform(position.set(value(data,i),value(data,i+1),value(data,i+2),1));
+      normals.transform(normal.set(value(data,i+6),value(data,i+7),value(data,i+8)));
+      target.vertex(position.x(),position.y(),position.z(),((color>>16)&255)/255f,((color>>8)&255)/255f,(color&255)/255f,1,
+          value(data,i+4),value(data,i+5),OverlayTexture.NO_OVERLAY,light,normal.x(),normal.y(),normal.z());
+    }
   }
 }

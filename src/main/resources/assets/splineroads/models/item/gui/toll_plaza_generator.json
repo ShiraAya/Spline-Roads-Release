@@ -1,0 +1,33 @@
+{
+  "gui_light": "front",
+  "render_type": "minecraft:cutout",
+  "textures": {
+    "icon": "splineroads:item/gui/toll_plaza_generator"
+  },
+  "elements": [
+    {
+      "from": [
+        0,
+        0,
+        8
+      ],
+      "to": [
+        16,
+        16,
+        8
+      ],
+      "shade": false,
+      "faces": {
+        "south": {
+          "uv": [
+            0,
+            0,
+            16,
+            16
+          ],
+          "texture": "#icon"
+        }
+      }
+    }
+  ]
+}

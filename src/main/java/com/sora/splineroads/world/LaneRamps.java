@@ -22,7 +22,7 @@ public final class LaneRamps {
     final IdentityHashMap<LaneRoadChain,Map<ApproachKey,LaneRampPaths.Port>> approaches=new IdentityHashMap<>();
     RoadStructures.Ground terrain;
     V junctionDirection;double minimumHeight=Double.NEGATIVE_INFINITY,maximumHeight=Double.POSITIVE_INFINITY;
-    boolean retainProfile;
+    boolean retainProfile,preferDirect;
     Planning(Map<RoadRecord,Mesh> seeds,V direction,double minHeight,double maxHeight){root=CURRENT.get()==null;if(root){CURRENT.set(this);seedMeshes=seeds;junctionDirection=direction;minimumHeight=minHeight;maximumHeight=maxHeight;}}
     final boolean root;final long started=System.nanoTime();long clearanceNanos;int routeCount,contactQueries;
     Planning(RoadData data){root=CURRENT.get()==null;if(root){CURRENT.set(this);if(data!=null){terrain=data.terrainGround();seedMeshes=data.index.planningSnapshot().seeds();}}}
@@ -36,7 +36,8 @@ public final class LaneRamps {
   /** A service interchange must stay above its fixed lower intersection, even in a geometry preview. */
   static RoadRecord aboveFloor(RoadData data,Map<UUID,RoadRecord> all,UUID id,UUID owner,LanePoints.Link link,double floor){
     try(var scope=new Planning(data)){
-      var active=CURRENT.get();var previous=active.terrain;boolean retain=active.retainProfile;
+      var active=CURRENT.get();var previous=active.terrain;boolean retain=active.retainProfile,direct=active.preferDirect;
+      active.preferDirect=true;
       // ParallelSpui only supplies ramps generated in this same draft. Host
       // extension needs full revalidation, not a new aesthetic profile search.
       active.retainProfile=all.containsKey(id);
@@ -46,7 +47,7 @@ public final class LaneRamps {
         public boolean blocked(RoadStructures.Part p){return previous!=null&&previous.blocked(p);}
         public boolean joined(V p){return previous!=null&&previous.joined(p);}
       };
-      try{return generate(data,all,id,owner,link);}finally{active.terrain=previous;active.retainProfile=retain;}
+      try{return generate(data,all,id,owner,link);}finally{active.terrain=previous;active.retainProfile=retain;active.preferDirect=direct;}
     }
   }
   private static List<RoadClearance.Contact> contacts(Mesh proposed,Mesh existing){
@@ -133,10 +134,14 @@ public final class LaneRamps {
     // Rechecking an unchanged connector must first validate its saved alignment.
     // Searching from scratch can choose a different family or reject an old valid
     // layout after a candidate ordering update. This still runs current clearance.
+    // A guardrail-only edit does not request a different vertical route. A valid
+    // saved AUTO underpass may be non-monotone because it clears a fixed host.
+    boolean railOnlyEdit=old!=null&&edited!=null
+        &&old.settings().options(old.settings().options().outerRail(edited.options().outerRail())).equals(edited);
     if(old!=null&&(edited==null||old.settings().options().ends().start()!=null&&old.settings().options().ends().end()!=null)&&sameRoute(LaneTopology.metadata(old).link(),link)&&base.width()==old.settings().width()
         &&base.thickness()==old.settings().thickness()&&base.style()==old.settings().style()
         &&(CURRENT.get()!=null&&CURRENT.get().retainProfile||link.options().elevation()==LanePoints.Elevation.KEEP||!LaneTopology.metadata(old).link().options().equals(link.options())||!verticalKink(old.mesh()))
-        &&(CURRENT.get()!=null&&CURRENT.get().retainProfile||link.options().elevation()!=LanePoints.Elevation.AUTO||monotone(old.mesh())))try{
+        &&(railOnlyEdit||CURRENT.get()!=null&&CURRENT.get().retainProfile||link.options().elevation()!=LanePoints.Elevation.AUTO||monotone(old.mesh())))try{
       var kept=old.settings(base);var candidate=kept.mesh();
       if(!currentApproaches(candidate,all,link))throw new IllegalArgumentException("额外汇入/汇出渐变长度已更新");
       var context=LaneCrossSections.staged(all,id,link,candidate);
@@ -393,6 +398,10 @@ public final class LaneRamps {
     // Smoothness may modestly increase length, but must not double the footprint.
     double shortest=candidates.stream().mapToDouble(c->c.mesh().length()).min().orElse(Double.POSITIVE_INFINITY);
     candidates.addAll(0,smoothCandidates.stream().filter(c->c.mesh().length()<=shortest*1.35).toList());
+    // The SPUI lane closure already reserves a straight corridor. Try the
+    // shortest alignment before optional lateral escapes; every candidate still
+    // passes the same live-lane, bicycle, grade and clearance checks.
+    if(CURRENT.get()!=null&&CURRENT.get().preferDirect)candidates.sort(Comparator.comparingDouble(c->c.mesh().length()));
     if(before.isEmpty()&&after.isEmpty())return candidates;
     var out=new ArrayList<LaneRampPaths.Candidate>();
     for(var c:candidates)try{
@@ -713,7 +722,10 @@ public final class LaneRamps {
     // joining floor is shared slab volume, not a second overhead obstacle.
     // Rails, piers and any concrete above the ramp surface remain constraints.
     var structures=start||end?road.structures().stream().filter(p->!RoadClearance.joiningFloor(p,road.mesh(),mesh)).toList():road.structures();
-    if(road.settings().structure()!=Structure.TUNNEL||!start&&!end)return structures;
+    // AUTO hosts carry real tunnel lining too. The final structure planner opens
+    // this same contiguous mouth; preview must not reject its removable wall.
+    // Unrelated hosts and all lining beyond the mouth remain obstacles.
+    if(!start&&!end||road.settings().structure()!=Structure.TUNNEL&&RoadAutoTunnels.regions(road.structures()).isEmpty())return structures;
     var lining=RoadRibbon.mesh(mesh.samples().stream().map(s->new Sample(s.center(),s.left(),s.distance(),s.halfWidth()+RoadAutoTunnels.LINING)).toList(),mesh.settings());
     var openings=new ArrayList<RoadShellOpening>();
     if(start)openings.add(new RoadShellOpening(mesh,0,lining.samples().get(contactEnd(lining,all,source,true)).distance(),d->RoadAutoTunnels.HEADROOM));
@@ -809,6 +821,11 @@ public final class LaneRamps {
     }
   }
   static void validate(Mesh mesh,Map<UUID,RoadRecord> all,UUID id,LanePoints.Link link){
+    // Reconciliation invokes validation outside a route search. Keep the same
+    // immutable-map cache scope here so every contact reuses its lane chain.
+    try(var ignored=new Planning((RoadData)null)){validatePrepared(mesh,all,id,link);}
+  }
+  private static void validatePrepared(Mesh mesh,Map<UUID,RoadRecord> all,UUID id,LanePoints.Link link){
     LaneRampTerrain.validate(mesh,link.options(),CURRENT.get()==null?null:CURRENT.get().terrain);
     RoadRibbon.checkSelfIntersections(mesh,4);LaneRampPaths.checkVolume(mesh);
     LaneRampGrade.validate(mesh,gradeLimit(all,link));

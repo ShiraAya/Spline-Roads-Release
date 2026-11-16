@@ -3,13 +3,33 @@ import com.sora.splineroads.core.RoadGeometry.*;
 import java.util.*;
 /** Exact retained terrain footprints. Render geometry never uses the outward collision raster. */
 public final class TerrainEdgeGeometry {
+  private record Footprints(List<List<V>> cuts,RoadBoundsIndex bounds){}
+  private static final WeakIdentityCache<Mesh,Footprints> FOOTPRINTS=
+      new WeakIdentityCache<>(128,200_000,f->f.cuts().size()+f.bounds().bucketCount());
+
+  private static Footprints prepare(Mesh mesh){
+    var cuts=new ArrayList<List<V>>();
+    var bounds=new ArrayList<RoadBoundsIndex.Bounds>();
+    for(int i=1;i<mesh.samples().size();i++){
+      RoadPlanningBudget.check();
+      for(var strip:LaneDeck.strips(mesh,mesh.samples().get(i-1),mesh.samples().get(i))){
+        var cut=List.of(strip.al(),strip.ar(),strip.br(),strip.bl());
+        cuts.add(cut);
+        bounds.add(new RoadBoundsIndex.Bounds(
+            cut.stream().mapToDouble(V::x).min().orElseThrow(),cut.stream().mapToDouble(V::z).min().orElseThrow(),
+            cut.stream().mapToDouble(V::x).max().orElseThrow(),cut.stream().mapToDouble(V::z).max().orElseThrow()));
+      }
+    }
+    return new Footprints(List.copyOf(cuts),new RoadBoundsIndex(bounds,4));
+  }
+
   public static List<List<V>> retain(V origin,List<Mesh> roads){
     List<List<V>> pieces=List.of(List.of(new V(0,0,0),new V(1,0,0),new V(1,0,1),new V(0,0,1)));
     var cell=new RoadBoundsIndex.Bounds(origin.x(),origin.z(),origin.x()+1,origin.z()+1);
-    for(var mesh:roads)for(int index:RoadPathIndex.segments(mesh).query(cell,mesh.settings().width()/2+2)){
-      var a=mesh.samples().get(index);var b=mesh.samples().get(index+1);
-      for(var strip:LaneDeck.strips(mesh,a,b)){
-        var cut=List.of(strip.al(),strip.ar(),strip.br(),strip.bl()).stream().map(p->new V(p.x()-origin.x(),0,p.z()-origin.z())).toList();
+    for(var mesh:roads){
+      var footprints=FOOTPRINTS.get(mesh,TerrainEdgeGeometry::prepare);
+      for(int index:footprints.bounds().query(cell,0)){
+        var cut=footprints.cuts().get(index).stream().map(p->new V(p.x()-origin.x(),0,p.z()-origin.z())).toList();
         var next=new ArrayList<List<V>>();for(var piece:pieces)next.addAll(RoadSurface.subtract(piece,cut));pieces=next;
         if(pieces.isEmpty())return List.of();
       }

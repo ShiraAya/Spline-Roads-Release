@@ -108,6 +108,7 @@ public final class ForkSignPlacement {
   }
   private static SmartSigns.Support find(Mesh ramp,Mesh host,List<Part> parts,int flow,boolean paired,boolean between){
     if(ramp.settings().structure()==Structure.TUNNEL)return null;
+    boolean ordinary=!between&&RoadJunction.ordinaryAuxiliary(ramp,host,true);
     V best=null;double first=Double.POSITIVE_INFINITY;V heading=null;boolean bestBase=false;
     for(var p:parts){
       boolean base=isBase(p),beam=isBeam(p);
@@ -122,6 +123,9 @@ public final class ForkSignPlacement {
         if(!onPath(ramp,start,.05)||!onPath(host,start,.05))continue;
         var near=RoadQueries.horizontal(host,start);var h=near.sample();
         if(!atDeckHeight(start,at,h))continue;
+        // The full lane can still share the shoulder after the widening taper.
+        // Its painted approach and continuous outer rail are upstream of the fork.
+        if(ordinary&&!ordinaryFork(host,at))continue;
         if(between&&(at.left().dot(h.left().mul(flow))<.5||q.lateral()*near.lateral()*flow>=-.05))continue;
         if(Math.abs(at.center().y()-h.center().y())>3.5)continue;
         if(beam&&bestBase&&Math.abs(at.distance()-first)<1e-5)continue;
@@ -155,6 +159,15 @@ public final class ForkSignPlacement {
   }
   /** A mast bolted to the nose may meet its small rail tubes/post at the foot.
    * This never exempts a wall, concrete shell, overhead beam or the sign board. */
+  private static boolean ordinaryFork(Mesh host,Sample sample){
+    var hostAt=RoadQueries.horizontal(host,sample.center()).sample();
+    double side=Math.signum(hostAt.center().sub(sample.center()).dot(sample.left()));
+    V edge=sample.at(side*sample.halfWidth(),0);
+    var closest=RoadQueries.horizontal(host,edge);
+    return Math.abs(closest.lateral())>closest.sample().halfWidth()+.12
+        ||Math.abs(edge.y()-closest.sample().center().y())>.12;
+  }
+
   public static boolean mountingContact(Part mast,Part rail,SmartSigns.Support support){
     if(support==null||!mast.pier()||mast.material()!=Material.STEEL||Math.abs(mast.width()-.30)>1e-6
         ||mast.a().distance(support.foot().add(support.front().mul(-.08)))>1e-6)return false;

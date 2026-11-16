@@ -35,11 +35,11 @@ public final class RoadRibbon {
         V delta = p.center().sub(before.center());
         double h = delta.horizontalLength();
         if (h < 1e-8 || Math.abs(delta.y()) > h * .505)
-          throw new IllegalArgumentException("立交坡度超过 50%，请扩大范围或降低层高");
-        if (before.left().dot(p.left()) < 0) throw new IllegalArgumentException("立交路径折返");
+          throw new IllegalArgumentException("道路坡度超过 50%，请拉开经过点或降低高差");
+        if (before.left().dot(p.left()) < 0) throw new IllegalArgumentException("道路曲线折返，请调整经过点或转弯方向");
         for (int side : new int[] {-1, 1})
           if (p.at(side * p.halfWidth(), 0).sub(before.at(side * before.halfWidth(), 0)).dot(delta)
-              <= 0) throw new IllegalArgumentException("立交内侧半径不足，请扩大范围");
+              <= 0) throw new IllegalArgumentException("道路转弯内侧半径不足，请拉开经过点或扩大转弯范围");
         d += delta.distance(new V(0, 0, 0));
       }
       result.add(new Sample(p.center(), p.left(), d, p.halfWidth()));

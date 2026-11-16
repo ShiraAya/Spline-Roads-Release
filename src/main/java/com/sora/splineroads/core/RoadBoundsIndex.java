@@ -20,7 +20,7 @@ public final class RoadBoundsIndex {
     boolean small(){long x=(long)x1-x0+1,z=(long)z1-z0+1;return x>0&&z>0&&x<=MAX_BUCKETS&&z<=MAX_BUCKETS&&x*z<=MAX_BUCKETS;}
   }
   private final List<Bounds> entries=new ArrayList<>();
-  private final Map<Long,Set<Integer>> buckets=new HashMap<>();
+  private final Map<Long,Set<Integer>> buckets=new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
   private final Set<Integer> large=new HashSet<>();
   private long examined,queries;
   private final boolean spatial;

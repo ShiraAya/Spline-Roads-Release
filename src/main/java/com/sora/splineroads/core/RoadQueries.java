@@ -7,21 +7,16 @@ public final class RoadQueries {
 
   // Identity avoids hashing complete sample lists. Evict one old entry rather than
   // clearing the entire working set whenever a junction exceeds 128 fragments.
-  private record Key(Mesh mesh) {
-    @Override public int hashCode(){return System.identityHashCode(mesh);}
-    @Override public boolean equals(Object other){return other instanceof Key k&&mesh==k.mesh;}
-  }
   private static final class Cache {
-    final java.util.LinkedHashMap<Key,RoadProjection> entries=new java.util.LinkedHashMap<>(64,.75f,true);
+    final it.unimi.dsi.fastutil.objects.Reference2ObjectLinkedOpenHashMap<Mesh,RoadProjection> entries=new it.unimi.dsi.fastutil.objects.Reference2ObjectLinkedOpenHashMap<>(64);
     final int capacity,sampleLimit;int samples;long builds;
     Cache(int capacity,int sampleLimit){this.capacity=capacity;this.sampleLimit=sampleLimit;}
     RoadProjection get(Mesh mesh){
-      var key=new Key(mesh);var old=entries.get(key);if(old!=null)return old;
+      var old=entries.getAndMoveToLast(mesh);if(old!=null)return old;
       var value=new RoadProjection(mesh);builds++;int weight=mesh.samples().size();
       if(weight>sampleLimit)return value;
-      var it=entries.entrySet().iterator();
-      while(it.hasNext()&&(entries.size()>=capacity||samples+weight>sampleLimit)){samples-=it.next().getKey().mesh.samples().size();it.remove();}
-      entries.put(key,value);samples+=weight;return value;
+      while(!entries.isEmpty()&&(entries.size()>=capacity||samples+weight>sampleLimit)){samples-=entries.firstKey().samples().size();entries.removeFirst();}
+      entries.putAndMoveToLast(mesh,value);samples+=weight;return value;
     }
   }
   private static final ThreadLocal<Cache> PROJECTIONS=ThreadLocal.withInitial(()->new Cache(128,65_536));

@@ -92,14 +92,14 @@ public final class JunctionSlips {
  }
  /** Clip replaceable street furniture at the new lane; actual road/deck supports stay. */
  public static List<Part> clear(List<Part> parts,List<Mesh> slips){
-  var walkClip=new SidewalkJoins(slips,List.of());var out=new ArrayList<Part>();
+  var walkClip=new SidewalkJoins(slips,List.of());var baseClip=new SidewalkJoins(slips,List.of());var out=new ArrayList<Part>();
   for(var p:walkClip.clip(parts)){
    if(RoadSidewalks.smoothPart(p)){out.add(p);continue;}
    if((p.material()==Material.GREEN||p.material()==Material.SOIL||p.material()==Material.CONCRETE)&&p.height()<=1.2&&p.width()<=3&&!p.pier()){
     // Planting and its curb must share an exact cut, even where a short deck
     // overlap touches only one end of a long base. Never discard the whole base.
     var proxy=new Part(p.a(),p.b(),p.width(),p.height(),false,Material.WALK_STONE_BRICKS,p.frameA(),p.frameB());
-    for(var bit:new SidewalkJoins(slips,List.of()).clip(List.of(proxy)))out.add(new Part(bit.a(),bit.b(),bit.width(),p.height(),false,p.material(),bit.frameA(),bit.frameB(),p.model(),null));
+    for(var bit:baseClip.clipIndependent(List.of(proxy)))out.add(new Part(bit.a(),bit.b(),bit.width(),p.height(),false,p.material(),bit.frameA(),bit.frameB(),p.model(),null));
     continue;
    }
    boolean blocked=false;for(var m:slips){

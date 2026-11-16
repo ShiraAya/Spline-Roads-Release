@@ -11,6 +11,12 @@ public final class RoadConnectionChecks {
     if(h==null)return null;
     var n=h.node();return new RoadPlanner.Hint(new Node(new V(n.position().x(),y,n.position().z()),n.yaw(),0),h.headingLocked(),true,h.linked());
   }
+  /** Multipoint curves must leave linked ends with their saved tangent and grade. */
+  public static RoadPlanner.Hint curveHint(Settings settings,RoadPlanner.Hint authored,RoadPlanner.Hint seam){
+    if(settings.options().routing().controls().isEmpty()||seam==null||!seam.linked())return authored;
+    return seam;
+  }
+
   public static void require(RoadPlanner.Plan plan,RoadPlanner.Hint a,RoadPlanner.Hint b){
     if(plan.mesh().closed()||plan.settings().laneRamp()||plan.settings().style().ramp())return;
     var adjust=plan.settings().options().infrastructure().adjustment();

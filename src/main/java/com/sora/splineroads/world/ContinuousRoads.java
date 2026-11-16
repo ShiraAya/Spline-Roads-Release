@@ -50,8 +50,12 @@ public final class ContinuousRoads {
     return key;
   }
   public static Plan plan(CompoundTag t,Function<CompoundTag,Plan> base){
-    var sources=sources(t);if(HostAxes.retiredInterchange(t)||HostAxes.read(t).stream().anyMatch(a->!a.flat()))return base.apply(t);if(sources.isEmpty()||t.contains("Corridor"))return sources.isEmpty()?base.apply(t):segment(t,base.apply(t),sources);
+    var sources=sources(t);if(HostAxes.curved(t)||HostAxes.read(t).stream().anyMatch(a->!a.flat()))return base.apply(t);if(sources.isEmpty()||t.contains("Corridor"))return sources.isEmpty()?base.apply(t):segment(t,base.apply(t),sources);
     var plan=ContinuousFit.plan(t,candidate->{var fitted=base.apply(candidate);segment(t,fitted,sources);return fitted;});if(plan.anchors().size()!=t.getLongArray("Points").length)throw new IllegalArgumentException("立交端点方案数量不一致");for(int i=0;i<plan.anchors().size();i++)if(!virtual(t,i,plan.anchors().get(i)))physicalEnd(t,i,plan.anchors().get(i));return segment(t,plan,sources);
+  }
+  private static V terminal(Map<V,V> terminals,V original){
+    for(var end:terminals.entrySet())if(end.getKey().distance(original)<1e-6)return end.getValue();
+    return original;
   }
   static Plan confirmed(CompoundTag t,Plan plan){
     var sources=sources(t);
@@ -71,23 +75,23 @@ public final class ContinuousRoads {
       // Older saves may still identify a fitted arm by its former source endpoints.
       // Connect only the two outermost source ends to uncovered generated pavement.
       // Internal seams and donors already extending beyond the plan stay pinned.
-      var terminals=new HashMap<BlockPos,V>();
+      var terminals=new HashMap<V,V>();
       if(!t.contains("Corridor")&&axis*2+1<points.length){
         for(boolean first:new boolean[]{true,false}){
           double bound=first?Double.POSITIVE_INFINITY:Double.NEGATIVE_INFINITY;
-          BlockPos outer=null;
+          V outer=null;
           for(var item:axisSources)for(boolean start:new boolean[]{true,false}){
             var r=item.road();var end=start?r.a():r.b();
             V position=start?r.start().position():r.end().position();
             double station=position.sub(origin).dot(dir);
-            if(first?station<bound:station>bound){bound=station;outer=end;}
+            if(first?station<bound:station>bound){bound=station;outer=position;}
           }
           if(outer!=null&&(first?bound>=-1e-5:bound<=total+1e-5))
             terminals.put(outer,first?origin:generated.last().center());
         }
       }
       for(var source:axisSources){var r=source.road();V a=r.start().position(),b=r.end().position();
-        a=terminals.getOrDefault(r.a(),a);b=terminals.getOrDefault(r.b(),b);
+        a=terminal(terminals,a);b=terminal(terminals,b);
         double sa=a.sub(origin).dot(dir),sb=b.sub(origin).dot(dir),low=Math.min(sa,sb),high=Math.max(sa,sb);
         boolean occupies=Math.min(high,total)-Math.max(low,0)>1e-5;
         boolean moved=a.distance(r.start().position())>1e-6||b.distance(r.end().position())>1e-6;

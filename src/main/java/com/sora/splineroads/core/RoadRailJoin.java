@@ -91,11 +91,21 @@ public final class RoadRailJoin {
         var lane=LanePoints.lane(host,point);double station=lane.station()+(source?0:lane.sign()*link.targetOffset());
         try{var samples=LaneRampApproach.build(host,point.lane(),station,source,ramp.settings(),link.options().transition());
           double length=0;for(int i=1;i<samples.size();i++)length+=samples.get(i).center().distance(samples.get(i-1).center());
-          return source?new Range(0,length):new Range(ramp.length()-length,ramp.length());
+          return auxiliaryRange(ramp,host,source?new Range(0,length):new Range(ramp.length()-length,ramp.length()));
         }catch(IllegalArgumentException ignored){/* A continuation may own the rest of the port; ordinary clipping still applies. */}
       }
     }
     return null;
+  }
+  private static Range auxiliaryRange(Mesh ramp,Mesh host,Range range){
+    var link=ramp.settings().options().lanePoints().link();
+    if(link==null||!link.protectedMerge()||!link.rectangularClosure()
+        ||RoadProfile.layout(host,host.first()).cycleWidth()>.01)return range;
+    // A saved SPUI spline can meet the paved union just before its nominal
+    // reconstructed approach. Broaden only the candidate interval; triangle
+    // overlap and the strict height tolerance still decide the real opening.
+    double pad=link.options().transition();
+    return new Range(Math.max(0,range.from()-pad),Math.min(ramp.length(),range.to()+pad));
   }
   /** Resolve an auxiliary approach across actual continuous ribbons. The clicked
    * point can be on the next record while the taper begins on this one. */
@@ -113,7 +123,7 @@ public final class RoadRailJoin {
         var samples=LaneRampApproach.build(d->{var at=auxiliaryStation(context,host,point.lane(),end+lane.sign()*(source?d:d-run));used.add(at.mesh());return at;},source,ramp.settings(),link.options().transition(),host.settings().structure()==Structure.TUNNEL);
         double length=0;for(int i=1;i<samples.size();i++)length+=samples.get(i).center().distance(samples.get(i-1).center());
         var range=source?new Range(0,length):new Range(ramp.length()-length,ramp.length());
-        for(var connected:used)result.put(connected,range);
+        for(var connected:used)result.put(connected,auxiliaryRange(ramp,connected,range));
       }catch(IllegalArgumentException ignored){/* Missing/ambiguous continuations retain their barriers. */}
     }
     return result;
@@ -164,7 +174,9 @@ public final class RoadRailJoin {
       if(theirAuxiliary==null)theirAuxiliary=auxiliary(mesh,current);
       boolean legacy=ourAuxiliary!=null&&current.settings().options().lanePoints().link()==null
           ||theirAuxiliary!=null&&mesh.settings().options().lanePoints().link()==null;
-      buildingTolerance=legacy||RoadJunction.sharedRampFork(current,mesh)||normalJoin(current,mesh)||current!=null&&normalJoin(mesh,current)?.12:JOIN_HEIGHT;
+      boolean ourOrdinary=RoadJunction.ordinaryAuxiliary(current,mesh,true)||RoadJunction.ordinaryAuxiliary(current,mesh,false);
+      boolean theirOrdinary=RoadJunction.ordinaryAuxiliary(mesh,current,true)||RoadJunction.ordinaryAuxiliary(mesh,current,false);
+      buildingTolerance=legacy||ourOrdinary||theirOrdinary||RoadJunction.sharedRampFork(current,mesh)||normalJoin(current,mesh)||current!=null&&normalJoin(mesh,current)?.12:JOIN_HEIGHT;
       for(int i=1;i<mesh.samples().size();i++){
         var a=mesh.samples().get(i-1);var b=mesh.samples().get(i);
         for(var strip:LaneDeck.strips(mesh,a,b)) {
@@ -172,9 +184,10 @@ public final class RoadRailJoin {
           // welded overlap used by an auxiliary lane used to disappear after both
           // faces were inset .16, leaving a barrier across an otherwise open merge.
           double station=(a.distance()+b.distance())/2;
-          V tangent=!legacy&&theirAuxiliary!=null&&station>=theirAuxiliary.from()&&station<=theirAuxiliary.to()?null:b.center().sub(a.center()).horizontalUnit();
-          add(material,strip.al(),strip.ar(),strip.br(),true,tangent,legacy?null:ourAuxiliary);
-          add(material,strip.al(),strip.br(),strip.bl(),true,tangent,legacy?null:ourAuxiliary);
+          V tangent=(theirOrdinary||!legacy)&&theirAuxiliary!=null&&station>=theirAuxiliary.from()&&station<=theirAuxiliary.to()?null:b.center().sub(a.center()).horizontalUnit();
+          var approach=legacy&&!ourOrdinary?null:ourAuxiliary;
+          add(material,strip.al(),strip.ar(),strip.br(),true,tangent,approach);
+          add(material,strip.al(),strip.br(),strip.bl(),true,tangent,approach);
           // Only exposed band boundaries get an inset. Zero-size slots split a
           // continuous face too, but those split lines must not become false gutters.
           double highA=strip.al().distance(a.at(a.halfWidth(),0))<1e-6?inset(mesh,a,1,paintInset):INSET,highB=strip.bl().distance(b.at(b.halfWidth(),0))<1e-6?inset(mesh,b,1,paintInset):INSET;

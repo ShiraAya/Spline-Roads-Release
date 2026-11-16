@@ -212,7 +212,8 @@ public final class RoadSidewalks {
       if(best>.00001&&best<4){if(start)result.add(0,closest);else result.add(closest);}
     }return List.copyOf(result);
   }
-  public static List<RoadStructures.Part> taperedJunctionParts(JunctionSpec spec,List<Mesh> approaches,List<V> boundary){
+  public static List<RoadStructures.Part> taperedJunctionParts(JunctionSpec spec,List<Mesh> approaches,List<V> boundary){return taperedJunctionParts(spec,approaches,boundary,true);}
+  public static List<RoadStructures.Part> taperedJunctionParts(JunctionSpec spec,List<Mesh> approaches,List<V> boundary,boolean closeUnpaved){
     var out=new ArrayList<RoadStructures.Part>();int n=boundary.size();if(n<3)return out;
     boolean[] open=new boolean[n];int start=-1;double sign=JunctionPaint.area(boundary)>=0?-1:1;
     for(int i=0;i<n;i++){
@@ -225,15 +226,38 @@ public final class RoadSidewalks {
     for(int k=1;k<=n;k++){
       int i=(start+k)%n;
       if(open[i]){if(run.isEmpty())run.add(boundary.get(i));run.add(boundary.get((i+1)%n));}
-      else if(!run.isEmpty()){taperCorner(out,spec,approaches,run,sign);run.clear();}
+      else if(!run.isEmpty()){taperCorner(out,spec,approaches,run,sign,closeUnpaved);run.clear();}
     }
-    if(!run.isEmpty())taperCorner(out,spec,approaches,run,sign);
+    if(!run.isEmpty())taperCorner(out,spec,approaches,run,sign,closeUnpaved);
     out.addAll(TactilePaths.junction(spec,approaches,boundary,true));return List.copyOf(out);
   }
-  private static void taperCorner(List<RoadStructures.Part> out,JunctionSpec spec,List<Mesh> approaches,List<V> edge,double sign){
+  private static void taperCorner(List<RoadStructures.Part> out,JunctionSpec spec,List<Mesh> approaches,List<V> edge,double sign,boolean closeUnpaved){
     edge=closeCorner(spec,approaches,edge);
     if(edge.size()<2)return;var first=cornerEnd(spec,approaches,edge.get(0));var last=cornerEnd(spec,approaches,edge.get(edge.size()-1));
     double a=first.width(),b=last.width();if(a==0&&b==0)return;
+    if(closeUnpaved&&(a==0)!=(b==0)){
+      boolean start=a>0;var paved=start?first:last;var bare=start?last:first;
+      V p=edge.get(start?0:edge.size()-1),q=edge.get(start?edge.size()-1:0);
+      V outer=p.add(paved.normal().mul(paved.width()));
+      V u=paved.normal().left(),v=bare.normal().left(),delta=q.sub(outer);
+      double den=u.x()*v.z()-u.z()*v.x();
+      if(Math.abs(den)>.1){
+        V corner=outer.add(u.mul((delta.x()*v.z()-delta.z()*v.x())/den));
+        if(corner.distance(p)<paved.width()*8+edge.get(0).distance(edge.get(edge.size()-1))){
+          var polygon=new ArrayList<V>(edge);
+          if(start){polygon.add(corner);polygon.add(outer);}else{polygon.add(outer);polygon.add(corner);}
+          // Fill up to the bare road edge. The absent sidewalk cannot supply
+          // the part beyond the ordinary offset arc.
+          V anchor=polygon.get(0).add(new V(0,-.3,0));
+          for(int k=1;k<polygon.size()-1;k++){
+            V x=polygon.get(k).add(new V(0,-.3,0)),y=polygon.get(k+1).add(new V(0,-.3,0));
+            if(Math.abs(JunctionPaint.area(List.of(anchor,x,y)))<1e-8)continue;
+            out.add(new RoadStructures.Part(anchor.add(x).mul(.5),y,Math.max(.001,Math.min(8,anchor.distance(x))),.5,false,Finish.of(paved.config().material()).material()).frames(anchor.sub(x).mul(.5),new V(0,0,0)));
+          }
+          return;
+        }
+      }
+    }
     // End a full-width corner against the unpaved arm; tapering to zero made a
     // pinched, uncovered triangle between the road and the surviving sidewalk.
     if(a==0)a=b;else if(b==0)b=a;
@@ -250,7 +274,7 @@ public final class RoadSidewalks {
     }
   }
   static List<RoadStructures.Part> cornerPaving(JunctionSpec spec,List<Mesh> approaches,List<V> edge,double sign){
-    var out=new ArrayList<RoadStructures.Part>();taperCorner(out,spec,approaches,edge,sign);return out;
+    var out=new ArrayList<RoadStructures.Part>();taperCorner(out,spec,approaches,edge,sign,false);return out;
   }
   public static boolean blocksTactile(RoadStructures.Part part,Mesh mesh){
     Config c=mesh.settings().options().sidewalk();if(!c.enabled()||!c.tactile()||c.width()<2)return false;

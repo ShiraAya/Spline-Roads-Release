@@ -16,9 +16,13 @@ final class RoadColdSync {
     return value^(value>>>31);
   }
   void evicted(long chunk){long h=hash(chunk);retired.set((int)h&MASK);retired.set((int)(h>>>32)&MASK);}
-  void arrived(long chunk){
+  boolean mayHaveEvicted(long chunk){
+    if(retired.isEmpty())return false;
     long h=hash(chunk);
-    if(retired.get((int)h&MASK)&&retired.get((int)(h>>>32)&MASK)){generation++;pending=true;}
+    return retired.get((int)h&MASK)&&retired.get((int)(h>>>32)&MASK);
+  }
+  void arrived(long chunk){
+    if(mayHaveEvicted(chunk)){generation++;pending=true;}
   }
   boolean request(long tick){
     if(!pending||tick-lastRequest<41)return false;

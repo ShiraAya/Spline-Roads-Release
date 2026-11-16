@@ -82,7 +82,7 @@ public final class LaneRampPaint {
         &&RoadQueries.contains(item.ramp(),m.at(side*(edge+.7),0),0,.06))return true;
     return false;
   }
-  /** A whole dash needs room on its outside; a paper-thin taper is not a lane. */
+  /** A whole dash must remain on pavement, including where the auxiliary lane tapers. */
   public static boolean auxiliaryGuideAt(Mesh host,Sample a,Sample b,int side,List<Auxiliary> candidates){
     if(!auxiliaryAt(host,a,b,side,candidates))return false;
     for(var item:candidates)if(item.side()==side&&guideFits(host,a,b,side,item.ramp()))return true;
@@ -92,7 +92,7 @@ public final class LaneRampPaint {
     for(var at:List.of(a,RoadStructures.sample(host,(a.distance()+b.distance())/2),b)){
       var layout=RoadProfile.layout(host,at);
       double edge=layout.cycleWidth()>.01||layout.catalog().type()==RoadProfile.Type.HIGHWAY?layout.outer(side):side*at.halfWidth();
-      for(double offset:new double[]{.15,1.25})
+      for(double offset:new double[]{.075,.15})
         if(!RoadQueries.contains(ramp,at.at(edge+side*offset,0),0,.06))return false;
     }
     return true;

@@ -11,7 +11,7 @@ import net.minecraft.server.level.*;
 public final class ManualPlannerHistory {
   private static final ThreadLocal<Scope> ACTIVE=new ThreadLocal<>();
   private final ArrayDeque<Entry> undo=new ArrayDeque<>(),redo=new ArrayDeque<>();
-  private static final int MAX_CELLS=1_000_000,MAX_RETAINED=2_000_000;
+  private static final int MAX_RETAINED=2_000_000;
   private int limit=30;private long revision;private Set<Long> changedChunks=Set.of();
   public Set<Long> changedChunks(){return changedChunks;}
   private static Set<Long> chunks(Entry entry){var result=new HashSet<Long>();for(long cell:entry.before().blocks.keySet())result.add(new net.minecraft.world.level.ChunkPos(BlockPos.of(cell)).toLong());return Set.copyOf(result);}
@@ -20,6 +20,7 @@ public final class ManualPlannerHistory {
   public void limit(int value){if(value<1||value>30)throw new IllegalArgumentException("撤销最大步应为1–30");limit=value;while(undo.size()>limit)undo.removeFirst();while(redo.size()>limit)redo.removeFirst();}
   public int undoCount(){return undo.size();}public int redoCount(){return redo.size();}
   public Scope begin(ServerPlayer player){return new Scope(player);}
+  static boolean active(){return ACTIVE.get()!=null;}
   static void capture(ServerLevel level,Collection<Long> cells){var scope=ACTIVE.get();if(scope!=null){if(scope.level!=level)throw new IllegalArgumentException("地图编辑维度已改变");scope.capture(cells);}}
   private static Map<UUID,CompoundTag> tags(Map<UUID,CompoundTag> source){var result=new LinkedHashMap<UUID,CompoundTag>();source.forEach((id,t)->result.put(id,t.copy()));return result;}
   private record State(Map<UUID,RoadRecord> roads,Map<UUID,RoadRecord> streets,Map<UUID,CompoundTag> junctions,Map<UUID,CompoundTag> interchanges,Map<SmartSigns.Key,SmartSigns.State> signs){
@@ -38,12 +39,12 @@ public final class ManualPlannerHistory {
   public final class Scope implements AutoCloseable {
     private final ServerLevel level;private final State state;private final StreetJournal.Snapshot before=new StreetJournal.Snapshot();private boolean finished;
     private Scope(ServerPlayer player){if(ACTIVE.get()!=null)throw new IllegalStateException("地图编辑不可嵌套");level=player.serverLevel();state=State.of(RoadData.get(level));ACTIVE.set(this);}
-    private void capture(Collection<Long> cells){var missing=new HashSet<>(cells);missing.removeAll(before.blocks.keySet());if(before.blocks.size()+missing.size()>MAX_CELLS)throw new IllegalArgumentException("本次地图编辑超过撤销记录上限，请分段操作");var values=new StreetJournal.Snapshot(level,missing);before.blocks.putAll(values.blocks);before.entities.putAll(values.entities);before.ledger.putAll(values.ledger);}
+    private void capture(Collection<Long> cells){var missing=new HashSet<>(cells);missing.removeAll(before.blocks.keySet());var values=new StreetJournal.Snapshot(level,missing);before.blocks.putAll(values.blocks);before.entities.putAll(values.entities);before.ledger.putAll(values.ledger);}
     private Entry changes(){var after=new StreetJournal.Snapshot(level,before.blocks.keySet());var changed=new HashSet<Long>();for(long key:before.blocks.keySet())if(!before.cellEquals(after,key)||!Objects.equals(before.ledger.get(key),after.ledger.get(key)))changed.add(key);before.keep(changed);after.keep(changed);var current=State.of(RoadData.get(level));
       return new Entry(before,after,Changes.between(state.roads(),current.roads()),Changes.between(state.streets(),current.streets()),Changes.between(state.junctions(),current.junctions()),Changes.between(state.interchanges(),current.interchanges()),Changes.between(state.signs(),current.signs()));
     }
     public void finish(){if(finished)return;var entry=changes();finished=true;
-      if(!entry.empty()){revision++;changedChunks=chunks(entry);undo.addLast(entry);redo.clear();while(undo.size()>limit||undo.stream().mapToInt(Entry::size).sum()>MAX_RETAINED)undo.removeFirst();}
+      if(!entry.empty()){revision++;changedChunks=chunks(entry);undo.addLast(entry);redo.clear();while(undo.size()>limit||undo.size()>1&&undo.stream().mapToLong(Entry::size).sum()>MAX_RETAINED)undo.removeFirst();}
     }
     @Override public void close(){try{if(!finished){var entry=changes();if(!entry.empty()){var data=RoadData.get(level);var callback=data.index.changed;data.index.changed=id->{};try{RoadData.restorePlannerBlocks(level,before.blocks,before.entities);before.ledger.forEach(data::streetLedger);restore(data,entry,true);}finally{data.index.changed=callback;}entry.roads().keys().forEach(callback);data.setDirty();for(UUID id:entry.roads().keys()){var b=data.index.roads.get(id);if(b==null)RoadNetwork.broadcastDelete(level,id);else RoadNetwork.broadcastRoad(level,b.record);}}}}finally{if(ACTIVE.get()==this)ACTIVE.remove();}}
   }
@@ -52,7 +53,17 @@ public final class ManualPlannerHistory {
     entry.roads().validate(current.roads(),reverse);entry.streets().validate(current.streets(),reverse);entry.junctions().validate(current.junctions(),reverse);entry.interchanges().validate(current.interchanges(),reverse);entry.signs().validate(current.signs(),reverse);
     var expected=reverse?entry.after():entry.before();var target=reverse?entry.before():entry.after();
     // A later road using a restored marker or cell also makes this history entry stale.
-    var changedNodes=new HashSet<BlockPos>();for(long key:target.blocks.keySet())if(target.blocks.get(key).is(com.sora.splineroads.SplineRoads.NODE.get())||expected.blocks.get(key).is(com.sora.splineroads.SplineRoads.NODE.get()))changedNodes.add(BlockPos.of(key));
+    var changedNodes=new HashSet<BlockPos>();for(long key:target.blocks.keySet())if(target.blocks.get(key).is(com.sora.splineroads.SplineRoads.NODE.get())||expected.blocks.get(key).is(com.sora.splineroads.SplineRoads.NODE.get())){
+      var a=target.entities.get(key);var b=expected.entities.get(key);
+      if(a!=null&&b!=null&&a.getBoolean("HiddenJunctionPoint")!=b.getBoolean("HiddenJunctionPoint")){
+        var other=a.copy();other.remove("HiddenJunctionPoint");var currentTag=b.copy();currentTag.remove("HiddenJunctionPoint");
+        if(other.equals(currentTag)&&a.hasUUID("JunctionSource")){
+          JunctionPointTool.requireFreeSeam(data,BlockPos.of(key),a.getUUID("JunctionSource"),player);
+          continue;
+        }
+      }
+      changedNodes.add(BlockPos.of(key));
+    }
     for(var road:data.index.roads.values())if(!entry.roads().keys().contains(road.record.id())){
       if(changedNodes.contains(road.record.a())||changedNodes.contains(road.record.b()))throw new IllegalArgumentException("后续道路使用了这个端点，请先撤销后续连接");
       for(long key:target.blocks.keySet())if(road.cells.containsKey(key)&&!Objects.equals(target.blocks.get(key),expected.blocks.get(key)))throw new IllegalArgumentException("后续道路使用了原施工范围");

@@ -132,16 +132,23 @@ public final class LanePoints {
         (present?ordinal+" / "+same.size()+" 车道"+(LaneSections.edge(mesh,station,index)?"（边缘）":""):"预留空位 "+(index+1));
   }
   public static boolean supported(Settings s){var type=RoadProfile.catalog(s.style()).type();if(type!=RoadProfile.Type.ORDINARY&&type!=RoadProfile.Type.HIGHWAY&&!s.style().connectorRamp())return false;if(s.structure()!=Structure.BRIDGE)return true;return switch(s.options().infrastructure().bridge()){case STANDARD,BEAM,OVERPASS,TEMPLATE->true;default->false;};}
-  public static boolean opening(Mesh mesh,V location){
-    for(var opening:mesh.settings().options().lanePoints().openings())for(int i=1;i<opening.centerline().size();i++){
-      V a=opening.centerline().get(i-1),b=opening.centerline().get(i),d=b.sub(a);double length=d.x()*d.x()+d.z()*d.z();if(length<1e-9)continue;double t=Math.max(0,Math.min(1,(location.x()-a.x())*d.x()/length+(location.z()-a.z())*d.z()/length));V p=a.add(d.mul(t));
-      if(Math.abs(location.y()-p.y())>=2.2||location.sub(p).horizontalLength()>=opening.halfWidth()+.4)continue;
-      if((t==0||t==1)&&mesh.settings().options().lanePoints().access().stream().anyMatch(r->r.connection().equals(opening.connection()))){
-        double past=(location.x()-p.x())*d.x()+(location.z()-p.z())*d.z();
-        if(t==0&&past<0||t==1&&past>0)continue;
+  public static boolean opening(Mesh mesh,V location){return opening(mesh,location,true);}
+  public static boolean opening(Mesh mesh,V location,boolean includeElevatedAccess){
+    var lanes=mesh.settings().options().lanePoints();
+    for(var opening:lanes.openings()){
+      boolean elevated=lanes.access().stream().anyMatch(r->r.connection().equals(opening.connection()));
+      if(elevated&&!includeElevatedAccess)continue;
+      for(int i=1;i<opening.centerline().size();i++){
+        V a=opening.centerline().get(i-1),b=opening.centerline().get(i),d=b.sub(a);double length=d.x()*d.x()+d.z()*d.z();if(length<1e-9)continue;double t=Math.max(0,Math.min(1,(location.x()-a.x())*d.x()/length+(location.z()-a.z())*d.z()/length));V p=a.add(d.mul(t));
+        if(Math.abs(location.y()-p.y())>=2.2||location.sub(p).horizontalLength()>=opening.halfWidth()+.4)continue;
+        if((t==0||t==1)&&elevated){
+          double past=(location.x()-p.x())*d.x()+(location.z()-p.z())*d.z();
+          if(t==0&&past<0||t==1&&past>0)continue;
+        }
+        return true;
       }
-      return true;
-    }return false;
+    }
+    return false;
   }
   private LanePoints(){}
 }

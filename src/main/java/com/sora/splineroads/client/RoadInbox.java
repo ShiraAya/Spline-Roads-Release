@@ -3,6 +3,7 @@ package com.sora.splineroads.client;
 import com.sora.splineroads.net.RoadWire;
 import com.sora.splineroads.world.RoadIndex;
 import com.sora.splineroads.world.RoadRecord;
+import com.sora.splineroads.world.RoadSnapshotCodec;
 import java.util.concurrent.*;
 import java.util.*;
 import java.util.function.Consumer;
@@ -20,7 +21,9 @@ public final class RoadInbox {
   private final Map<UUID,Long> cancelled=new HashMap<>();
   private long sequence;
   private volatile long completedSequence;
-  public static final int MAX_RAW_TASKS = 256;
+  public static final int MAX_RAW_TASKS = 1024;
+  // Dense saves can deliver hundreds of tiny road/sign messages in a single
+  // loading frame, even though they consume very little of the byte budget.
   public static final long MAX_RAW_BYTES = 8L * 1024 * 1024;
   private final java.util.concurrent.atomic.AtomicLong rawBytes = new java.util.concurrent.atomic.AtomicLong();
   private final java.util.concurrent.atomic.AtomicBoolean recoveryNeeded = new java.util.concurrent.atomic.AtomicBoolean();
@@ -31,6 +34,7 @@ public final class RoadInbox {
         Thread t = new Thread(task, "SplineRoads network decoder"); t.setDaemon(true); return t;
       });
   private final ArrayBlockingQueue<Ready> ready = new ArrayBlockingQueue<>(64);
+  private Ready pendingCluster;
   private final RoadWire.Assembler controls = new RoadWire.Assembler();
   private volatile long epoch;
   private record Decoded(Event event,long bytes){}
@@ -61,7 +65,7 @@ public final class RoadInbox {
     session = new Session();
     var abandoned = new ArrayList<Runnable>(); worker.getQueue().drainTo(abandoned);
     for (var task : abandoned) if (task instanceof RawTask raw) raw.release();
-    ready.clear(); controls.clear(); deleted.clear(); cancelled.clear();
+    ready.clear();pendingCluster=null; controls.clear(); deleted.clear(); cancelled.clear();
     recoveryNeeded.set(false); lastRecoveryNanos = 0;
   }
 
@@ -138,7 +142,7 @@ public final class RoadInbox {
           built=new RoadIndex.Built(RoadRecord.load(tag.getCompound("Road")),true);built.prepareCollision();
 
         }
-        var batch=new ArrayList<RoadIndex.Built>();if(tag.getString("Type").equals("roadBatch"))for(var entry:tag.getList("Roads",net.minecraft.nbt.Tag.TAG_COMPOUND)){var part=new RoadIndex.Built(RoadRecord.load((CompoundTag)entry),true);part.prepareCollision();batch.add(part);}
+        var batch=new ArrayList<RoadIndex.Built>();if(tag.getString("Type").equals("roadBatch")||tag.getString("Type").equals("roadCluster"))for(var record:RoadSnapshotCodec.read(tag)){var part=new RoadIndex.Built(record,true);part.prepareCollision();batch.add(part);}
         var preview=RoadPreviewData.queued(tag)?RoadPreviewData.prepare(tag):null;
         decodeNanos+=System.nanoTime()-started;result=new Event(tag,built,null,List.copyOf(batch),preview);
         if(built!=null){long weight=4096L+packed.length*8L+built.mesh.samples().size()*384L+built.record.structures().size()*512L;
@@ -181,9 +185,26 @@ public final class RoadInbox {
     long deadline = System.nanoTime() + 2_000_000;
     int count = 0;
     while (count < 8 && System.nanoTime() < deadline) {
-      Ready next = ready.poll(); if (next == null) break;
+      Ready next=pendingCluster==null?ready.poll():pendingCluster;
+      pendingCluster=null;
+      if(next==null)break;
       if(next.epoch==epoch) {
         var event=next.event();
+        if(event.tag()!=null&&event.tag().getString("Type").equals("roadCluster")){
+          if(!stale(next)){
+            String dimension=event.tag().getString("Dimension");
+            var roads=event.batch();
+            int i=0;
+            for(;i<roads.size()&&count<8&&System.nanoTime()<deadline;i++){
+              var road=roads.get(i);
+              if(next.sequence()<=deleted.getOrDefault(new RoadKey(dimension,road.record.id()),-1L))continue;
+              sink.accept(new Event(event.tag(),road,null));count++;
+            }
+            if(i<roads.size())pendingCluster=new Ready(next.epoch(),next.sequence(),next.transfer(),
+                new Event(event.tag(),null,null,roads.subList(i,roads.size())));
+          }
+          continue;
+        }
         if(!stale(next)){sink.accept(event);count++;}
         else if(event.preview()!=null){sink.accept(new Event(RoadPreviewData.failed(event.tag(),"预览所用道路已改变，请重新预览"),null,null));count++;}
       }
@@ -201,7 +222,7 @@ public final class RoadInbox {
     // A completed fragment is not necessarily a completed message. Preserve
     // barriers across gaps between parts and while the sole decoder is preparing
     // geometry before ready.offer; Ready then retains the first fragment sequence.
-    if(ready.isEmpty()&&worker.getActiveCount()==0&&worker.getQueue().isEmpty()&&active.assembler.pendingCount()==0){
+    if(pendingCluster==null&&ready.isEmpty()&&worker.getActiveCount()==0&&worker.getQueue().isEmpty()&&active.assembler.pendingCount()==0){
       deleted.values().removeIf(cutoff->completedSequence>=cutoff);
       cancelled.values().removeIf(cutoff->completedSequence>=cutoff);
     }

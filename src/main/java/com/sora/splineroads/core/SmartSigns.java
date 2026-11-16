@@ -264,16 +264,26 @@ public final class SmartSigns {
         for(int i=0;i<64;i++){int j=(i+1)%64;faces.add(new RoadSurface.Face(List.of(inner.get(i),outer.get(i),outer.get(j),inner.get(j)),WHITE));}
       }
       var ordered=new ArrayList<>(state.branches().stream().filter(v->!v.path().isEmpty()).toList());
-      ordered.sort(Comparator.comparingDouble(v->v.path().get(v.path().size()-1).x()));
+      ordered.sort(ring?Comparator.comparingDouble(v->v.path().get(v.path().size()-1).x()):
+          Comparator.comparingInt(Branch::side)
+              .thenComparingDouble(v->{V d=v.path().get(v.path().size()-1);return Math.atan2(Math.abs(d.x()),d.z());})
+              .thenComparing(Branch::id));
       int leftCount=(int)ordered.stream().filter(v->v.side()<0).count(),rightCount=(int)ordered.stream().filter(v->v.side()>0).count(),li=0,ri=0;
       for(var branch:ordered){var d=branch.path().get(branch.path().size()-1);double dx=d.x(),dy=d.z(),length=Math.hypot(dx,dy);if(length<.01)continue;dx/=length;dy/=length;
         // Topology retains real tangents; ordinary signs use orthogonal symbols.
         if(!ring){if(branch.side()==0){dx=0;dy=1;}else{dx=branch.side();dy=0;}}
         double sx=x+dx*(ring?r:0),sy=cy+dy*(ring?r:0),reach=Math.min(1.24/Math.max(.001,Math.abs(dx)),(dy>=0?Math.min(.83,1.40-cy):cy-.12)/Math.max(.001,Math.abs(dy))),tx=x+dx*reach,ty=cy+dy*reach;
-        continuousArrow(faces,t,List.of(new V(sx,sy,0),new V(tx,ty,0)),.065,INK+.01);
+        int count=branch.side()<0?leftCount:rightCount;
+        int index=branch.side()==0?0:branch.side()<0?li++:ri++;
+        if(ring||index==0)
+          continuousArrow(faces,t,List.of(new V(sx,sy,0),new V(tx,ty,0)),.065,INK+.01);
         double fx,fy,fw;
         if(branch.side()==0){fx=x;fy=1.75;fw=1.22;}
-        else {int count=branch.side()<0?leftCount:rightCount,index=branch.side()<0?li++:ri++;fx=x+branch.side()*1.04;fy=count==1?(ring&&cy>.8&&dy>.15?.46:Math.max(1.05,cy+.58)):1.68-index*(1.2/Math.max(1,count-1));fw=.78;}
+        else {
+          fx=x+branch.side()*1.04;fw=.78;
+          if(count==1)fy=ring&&cy>.8&&dy>.15?.46:Math.max(1.05,cy+.58);
+          else fy=1.68-index*((ring?1.2:.58)/(count-1));
+        }
         fields.add(new Field(branch.id()+"/main",fx,fy,fw,.19,1));fields.add(new Field(branch.id()+"/sub",fx,fy-.18,fw,.12,1));
       }
     }

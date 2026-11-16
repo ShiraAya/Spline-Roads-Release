@@ -47,19 +47,42 @@ public final class AutoCrossings {
     }return List.copyOf(result);
   }
   private static boolean sharedEnd(RoadRecord a,RoadRecord b,V p){for(boolean first:new boolean[]{true,false}){var pos=first?a.a():a.b();if((pos.equals(b.a())||pos.equals(b.b()))&&p.distance((first?a.start():a.end()).position())<2)return true;}return false;}
-  static List<RoadRecord> candidates(CompoundTag t){var out=new ArrayList<RoadRecord>();for(Tag entry:t.getList("CrossingCandidates",Tag.TAG_COMPOUND))out.add(RoadRecord.load(((CompoundTag)entry).getCompound("Road")));return out;}
+  static List<RoadRecord> candidates(CompoundTag t){var out=new ArrayList<RoadRecord>();for(Tag entry:t.getList("CrossingCandidates",Tag.TAG_COMPOUND))out.add(RoadRecord.load(candidate(t,(CompoundTag)entry)));return out;}
+  private static CompoundTag candidate(CompoundTag command,CompoundTag entry){return entry.contains("RoadRef")?pooled(command,entry.getInt("RoadRef")):entry.getCompound("Road");}
+  private static CompoundTag pooled(CompoundTag command,int reference){
+    var roads=command.getList("CrossingRoads",Tag.TAG_COMPOUND);
+    if(reference<0||reference>=roads.size())throw new IllegalArgumentException("交叉道路引用已失效，请重新打开道路设置");
+    return roads.getCompound(reference);
+  }
+  private static int intern(CompoundTag road,ListTag pool,Map<CompoundTag,Integer> references){
+    return references.computeIfAbsent(road,key->{int index=pool.size();pool.add(key);return index;});
+  }
+  private static CompoundTag graph(CompoundTag command,CompoundTag entry){
+    var graph=entry.getCompound("Graph").copy();
+    if(graph.contains("StreetRefs")){var streets=new ListTag();for(int reference:graph.getIntArray("StreetRefs"))streets.add(pooled(command,reference).copy());graph.remove("StreetRefs");graph.put("Streets",streets);}
+    for(Tag value:graph.getList("SlipNext",Tag.TAG_COMPOUND)){var edge=(CompoundTag)value;if(edge.contains("RoadRef")){edge.put("Road",pooled(command,edge.getInt("RoadRef")).copy());edge.remove("RoadRef");}}
+    return graph;
+  }
   static void enrich(CompoundTag command,RoadData data,BlockPos a,BlockPos b,UUID id){enrich(command,data,a,b,id,true);}
   static void enrich(CompoundTag command,RoadData data,BlockPos a,BlockPos b,UUID id,boolean structures){
-    var list=new ListTag();double reach=RoadLimits.MAX_ENDPOINT_DISTANCE;
+    var list=new ListTag();var pool=new ListTag();var references=new HashMap<CompoundTag,Integer>();double reach=RoadLimits.MAX_ENDPOINT_DISTANCE;
     var available=new LinkedHashMap<>(AutoJunctions.logical(data));data.index.roads.values().stream().map(built->built.record).filter(RoadRecord::railway).forEach(r->available.put(r.id(),r));
     for(var r:available.values()){if(r.id().equals(id)||!eligible(r)&&!r.railway())continue;var m=r.mesh();
       if(m.max().x()<Math.min(a.getX(),b.getX())-reach||m.min().x()>Math.max(a.getX(),b.getX())+reach||m.max().z()<Math.min(a.getZ(),b.getZ())-reach||m.min().z()>Math.max(a.getZ(),b.getZ())+reach)continue;
-      var entry=new CompoundTag();entry.put("Road",r.header());entry.put("Graph",r.railway()?new CompoundTag():AutoJunctions.context(data,Set.of(r.a(),r.b()),structures));list.add(entry);
-    }command.put("CrossingCandidates",list);
+      var entry=new CompoundTag();entry.putInt("RoadRef",intern(r.header(),pool,references));
+      var graph=r.railway()?new CompoundTag():AutoJunctions.context(data,Set.copyOf(List.of(r.a(),r.b())),structures);
+      // Every candidate needs its own active junctions, but neighboring graphs
+      // often contain the same long sliced road. Transmit that exact record once.
+      var streets=graph.getList("Streets",Tag.TAG_COMPOUND);var refs=new int[streets.size()];
+      for(int i=0;i<refs.length;i++)refs[i]=intern(streets.getCompound(i),pool,references);
+      if(graph.contains("Streets")){graph.remove("Streets");graph.putIntArray("StreetRefs",refs);}
+      for(Tag value:graph.getList("SlipNext",Tag.TAG_COMPOUND)){var edge=(CompoundTag)value;edge.putInt("RoadRef",intern(edge.getCompound("Road"),pool,references));edge.remove("Road");}
+      entry.put("Graph",graph);list.add(entry);
+    }command.put("CrossingCandidates",list);command.put("CrossingRoads",pool);
   }
   static CompoundTag graph(CompoundTag command,List<Hit> hits){
     var result=command.getCompound("JunctionGraph").copy();
-    for(Tag entry:command.getList("CrossingCandidates",Tag.TAG_COMPOUND)){var t=(CompoundTag)entry;if(hits.stream().anyMatch(h->h.road().equals(t.getCompound("Road").getUUID("Id"))))merge(result,t.getCompound("Graph"));}
+    for(Tag entry:command.getList("CrossingCandidates",Tag.TAG_COMPOUND)){var t=(CompoundTag)entry;if(hits.stream().anyMatch(h->h.road().equals(candidate(command,t).getUUID("Id"))))merge(result,graph(command,t));}
     var active=new LinkedHashSet<Long>();for(long p:result.getLongArray("ActiveNodes"))active.add(p);for(var h:hits)active.add(at(h.center()).asLong());result.putLongArray("ActiveNodes",active.stream().mapToLong(Long::longValue).toArray());return result;
   }
   private static void merge(CompoundTag into,CompoundTag from){

@@ -1,5 +1,6 @@
 package com.sora.splineroads.client;
 import com.sora.splineroads.core.RoadLanes;
+import com.sora.splineroads.core.RoadConnectionChecks;
 import com.sora.splineroads.core.LaneRampAlignment;
 import com.sora.splineroads.core.RoadTransitions;
 
@@ -563,13 +564,15 @@ public final class RoadScreen extends Screen {
         if(payload.getBoolean("LiveSectionB")&&payload.contains("AutoB")){var n=RoadData.readHint(payload.getCompound("AutoB")).node();b=new RoadPlanner.Hint(new Node(n.position(),b.node().yaw(),b.node().grade()),b.headingLocked(),b.gradeLocked(),b.linked());}
         var previous=payload.contains("Road")?RoadRecord.load(payload.getCompound("Road")):null;
         var plan=previous==null?null:previous.retainedPlan(s,a,b,RoadRecord.readNode(payload.getCompound("StartNode")),RoadRecord.readNode(payload.getCompound("EndNode")));
-        if(plan==null)plan = com.sora.splineroads.core.RoadTunnelFit.plan(a, b, s);
+
         var seamA=payload.contains("AutoA")?RoadData.readHint(payload.getCompound("AutoA")):null;
         var seamB=payload.contains("AutoB")?RoadData.readHint(payload.getCompound("AutoB")):null;
         if(payload.getBoolean("LevelEnds")) {
           seamA=com.sora.splineroads.core.RoadConnectionChecks.atLevel(seamA,BlockPos.of(payload.getLong("A")).getY());
           seamB=com.sora.splineroads.core.RoadConnectionChecks.atLevel(seamB,BlockPos.of(payload.getLong("B")).getY());
         }
+        if(plan==null)plan=com.sora.splineroads.core.RoadTunnelFit.plan(
+            RoadConnectionChecks.curveHint(s,a,seamA),RoadConnectionChecks.curveHint(s,b,seamB),s);
         com.sora.splineroads.core.RoadConnectionChecks.require(plan,seamA,seamB);
         int caps =
             (payload.getCompound("AutoA").getBoolean("Linked") ? 0 : 1)

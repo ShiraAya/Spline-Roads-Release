@@ -15,10 +15,8 @@ public final class RoadTunnelSpace {
   private record Patch(List<Vertex> polygon,double minX,double minZ,double maxX,double maxZ) {}
   private record Column(List<List<Vertex>> polygons,double top) {}
   private static final class Prepared {
-    final Map<Long,List<Patch>> grid=new HashMap<>();
-    final Map<Long,Column> columns=new LinkedHashMap<>(64,.75f,true){
-      protected boolean removeEldestEntry(Map.Entry<Long,Column> e){return size()>2048;}
-    };
+    final Map<Long,List<Patch>> grid=new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    final it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap<Column> columns=new it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap<>(64);
     int references;
     Prepared(Mesh mesh){
       var config=mesh.settings().options().infrastructure();
@@ -51,14 +49,14 @@ public final class RoadTunnelSpace {
             }
     }
     synchronized Column column(int x,int z){
-      long k=key(x,z);var old=columns.get(k);if(old!=null)return old;
+      long k=key(x,z);var old=columns.getAndMoveToLast(k);if(old!=null)return old;
       var polygons=new ArrayList<List<Vertex>>();double top=Double.NEGATIVE_INFINITY;
       for(var patch:grid.getOrDefault(key(tile(x),tile(z)),List.of())){
         if(patch.minX>=x+1-EPS||patch.maxX<=x+EPS||patch.minZ>=z+1-EPS||patch.maxZ<=z+EPS)continue;
         var p=clip(patch.polygon,a->a.x-x);p=clip(p,a->x+1-a.x);p=clip(p,a->a.z-z);p=clip(p,a->z+1-a.z);
         if(area(p)<EPS)continue;polygons.add(List.copyOf(p));for(var a:p)top=Math.max(top,a.roof);
       }
-      var result=new Column(List.copyOf(polygons),top);columns.put(k,result);return result;
+      var result=new Column(List.copyOf(polygons),top);columns.putAndMoveToLast(k,result);if(columns.size()>2048)columns.removeFirst();return result;
     }
   }
   private static final WeakIdentityCache<Mesh,Prepared> CACHE=new WeakIdentityCache<>(48,350_000,p->p.references);

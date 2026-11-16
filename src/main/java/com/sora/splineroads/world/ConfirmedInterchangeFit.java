@@ -12,7 +12,7 @@ final class ConfirmedInterchangeFit {
   static boolean eligible(CompoundTag source){
     int n=source.getList("Nodes",Tag.TAG_COMPOUND).size();
     return n>=3&&n<=4&&!source.contains("Corridor")&&!ParallelSpui.present(source)
-        &&!HostAxes.retiredInterchange(source)&&HostAxes.read(source).stream().allMatch(axis->axis.flat()&&!axis.curved());
+        &&HostAxes.read(source).stream().allMatch(axis->axis.flat()&&!axis.curved());
   }
   static CompoundTag candidate(CompoundTag source,CompoundTag command){
     Node[] original=HostAxes.nodes(source);int n=original.length;

@@ -7,7 +7,9 @@ import java.util.*;
 public final class MultiLevelBridges {
   public static final String MODEL="sr:stacked_bridge:";
   public static boolean compatible(Mesh lower,Mesh upper){
-    if(lower==upper||lower.closed()||upper.closed()||lower.length()<8||upper.length()<8
+    if(lower==upper||lower.min().x()>upper.max().x()+.02||upper.min().x()>lower.max().x()+.02
+        ||lower.min().z()>upper.max().z()+.02||upper.min().z()>lower.max().z()+.02
+        ||lower.closed()||upper.closed()||lower.length()<8||upper.length()<8
         ||lower.settings().structure()==Structure.TUNNEL||upper.settings().structure()==Structure.TUNNEL
         ||!elevatedDeck(lower)||!elevatedDeck(upper)||LaneDeck.hasOpenings(lower)||LaneDeck.hasOpenings(upper))return false;
     double clearance=RoadStructureClearance.headroom(lower);

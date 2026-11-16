@@ -371,8 +371,18 @@ public final class RoadRenderMesh {
    * never change ownership while neighbouring sections use different LODs. */
   private static void add(Map<Section, List<RoadSurface.Face>> map, RoadSurface.Face f) {
     RoadPlanningBudget.check();
-    double minX=f.points().stream().mapToDouble(V::x).min().orElseThrow(),maxX=f.points().stream().mapToDouble(V::x).max().orElseThrow();
-    double minZ=f.points().stream().mapToDouble(V::z).min().orElseThrow(),maxZ=f.points().stream().mapToDouble(V::z).max().orElseThrow();
+    double minX=Double.POSITIVE_INFINITY,maxX=-minX,minZ=minX,maxZ=-minX;
+    for(var p:f.points()){minX=Math.min(minX,p.x());maxX=Math.max(maxX,p.x());minZ=Math.min(minZ,p.z());maxZ=Math.max(maxZ,p.z());}
+    int sx=(int)Math.floor(minX/64),sz=(int)Math.floor(minZ/64);
+    // The usual face already belongs to one region. Four clipping passes would
+    // retain exactly these vertices and UVs; share the immutable face directly.
+    if(maxX<=(sx+1)*64.0&&maxZ<=(sz+1)*64.0){
+      if(f.points().size()<3)return;
+      V o=f.points().get(0);double area=0;
+      for(int i=1;i+1<f.points().size();i++){V a=f.points().get(i).sub(o),b=f.points().get(i+1).sub(o);area+=new V(a.y()*b.z()-a.z()*b.y(),a.z()*b.x()-a.x()*b.z(),a.x()*b.y()-a.y()*b.x()).distance(new V(0,0,0));}
+      if(area>=1e-12)map.computeIfAbsent(new Section(sx,0,sz),k->new ArrayList<>()).add(f);
+      return;
+    }
     for(int x=(int)Math.floor(minX/64);x<=(int)Math.floor((maxX-1e-9)/64)||x==(int)Math.floor(minX/64);x++)
       for(int z=(int)Math.floor(minZ/64);z<=(int)Math.floor((maxZ-1e-9)/64)||z==(int)Math.floor(minZ/64);z++){
         var v=new ArrayList<CutVertex>();for(int i=0;i<f.points().size();i++)v.add(new CutVertex(f.points().get(i),f.uv().isEmpty()?null:f.uv().get(i)));

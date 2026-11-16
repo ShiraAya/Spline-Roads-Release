@@ -127,9 +127,15 @@ public final class RoadTerrainHandoff {
   }
   static Section section(BlockPos p){return new Section(p.getX()>>4,p.getY()>>4,p.getZ()>>4);}
   /** Every model lookup in a worker sees one frozen publication and mode. */
-  static Map<Integer,ModelData> model(Section section,int cell){
-    var build=BUILD.get();if(build==null||!build.ticket.section.equals(section)||!build.ticket.terrain||build.ticket.source==null)return null;
-    var map=build.ticket.source.data();if(build.cells!=null&&map.containsKey(cell)&&!RoadTerrainModels.coverOnly(map.get(cell)))build.cells.set(cell);return map;
+  static ModelData model(BlockPos pos){
+    var build=BUILD.get();
+    if(build==null||!build.ticket.terrain||build.ticket.source==null)return null;
+    var section=build.ticket.section;
+    if(section.x()!=(pos.getX()>>4)||section.y()!=(pos.getY()>>4)||section.z()!=(pos.getZ()>>4))return null;
+    int cell=(pos.getX()&15)|((pos.getZ()&15)<<4)|((pos.getY()&15)<<8);
+    var data=build.ticket.source.data().get(cell);
+    if(data!=null&&build.cells!=null&&!RoadTerrainModels.coverOnly(data))build.cells.set(cell);
+    return data;
   }
   static boolean inBuild(){return BUILD.get()!=null;}
   public static void beginVanilla(Object task,RenderChunk chunk,AtomicBoolean cancelled,ChunkRenderDispatcher dispatcher){

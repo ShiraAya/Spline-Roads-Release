@@ -4,7 +4,7 @@ import java.util.function.LongSupplier;
 
 /** One persistent cursor across bounded publication calls. Work owns no world state here. */
 final class RoadPublicationBudget {
-  static final int FAMILIES = 4, MAX_VISITS = 64, MAX_BYTES = 262144;
+  static final int FAMILIES = 4, MAX_VISITS = 64, MAX_BYTES = 65536, MAX_FRAGMENTS = 4;
   @FunctionalInterface interface Publisher {
     /** Publish at most one fragment, or advance one bounded preparation step. */
     int step(int family, int remainingBytes);
@@ -15,14 +15,15 @@ final class RoadPublicationBudget {
   RoadPublicationBudget(LongSupplier clock) { this.clock = clock; }
 
   int publish(long deadline, Publisher publisher) {
-    int bytes = 0;
-    for (int visits = 0; visits < MAX_VISITS && bytes < MAX_BYTES && clock.getAsLong() < deadline; visits++) {
+    int bytes = 0, fragments = 0;
+    for (int visits = 0; visits < MAX_VISITS && fragments < MAX_FRAGMENTS && bytes < MAX_BYTES && clock.getAsLong() < deadline; visits++) {
       int family = nextFamily;
       // An expensive first step must not make the same family first again next tick.
       nextFamily = (family + 1) % FAMILIES;
       int sent = publisher.step(family, MAX_BYTES - bytes);
       if (sent < 0 || sent > MAX_BYTES - bytes) throw new IllegalStateException("Invalid road publication accounting");
       bytes += sent;
+      if(sent>0)fragments++;
     }
     return bytes;
   }

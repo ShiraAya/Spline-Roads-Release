@@ -13,7 +13,7 @@ public final class RoadSlicing {
   public record Fragment(UUID source,double origin,double total,Connection connection,RoadAttachments.Data applied,Geometry geometry,List<RoadStructures.Part> supports,List<RoadProfile.Control> curveAnchors){
     public Fragment(UUID source,double origin,double total,Connection connection,RoadAttachments.Data applied,Geometry geometry,List<RoadStructures.Part> supports){this(source,origin,total,connection,applied,geometry,supports,List.of());}
     public Fragment(UUID source,double origin,double total,Connection connection,RoadAttachments.Data applied,Geometry geometry){this(source,origin,total,connection,applied,geometry,List.of());}
-    public Fragment {curveAnchors=List.copyOf(curveAnchors);if(curveAnchors.size()>32)throw new IllegalArgumentException("分割曲线点数量无效");supports=List.copyOf(supports);if(supports.size()>50000)throw new IllegalArgumentException("分割桥墩数量过多");Objects.requireNonNull(source);Objects.requireNonNull(connection);Objects.requireNonNull(applied);Objects.requireNonNull(geometry);if(!RoadGeometry.finite(origin,total)||origin<0||total<=0||origin>=total)throw new IllegalArgumentException("分割路径范围无效");}
+    public Fragment {curveAnchors=List.copyOf(curveAnchors);if(curveAnchors.size()>32)throw new IllegalArgumentException("分割曲线点数量无效");supports=List.copyOf(supports);Objects.requireNonNull(source);Objects.requireNonNull(connection);Objects.requireNonNull(applied);Objects.requireNonNull(geometry);if(!RoadGeometry.finite(origin,total)||origin<0||total<=0||origin>=total)throw new IllegalArgumentException("分割路径范围无效");}
     public Fragment geometry(Geometry value){return new Fragment(source,origin,total,connection,applied,value,supports,curveAnchors);}
   }
   public record Slice(Mesh mesh,Geometry geometry){}
@@ -25,8 +25,12 @@ public final class RoadSlicing {
   }
   /** Interpolate the actual half-edge vector, not a unit normal with the old width. */
   public static Sample at(Mesh mesh,double station){
-    var points=mesh.samples();int hi=1;while(hi<points.size()-1&&points.get(hi).distance()<station)hi++;
-    var a=points.get(hi-1);var b=points.get(hi);double t=Math.max(0,Math.min(1,(station-a.distance())/(b.distance()-a.distance())));
+    var points=mesh.samples();int lo=0,hi=points.size()-1;
+    while(hi-lo>1){
+      int mid=(lo+hi)/2;
+      if(points.get(mid).distance()<station)lo=mid;else hi=mid;
+    }
+    var a=points.get(lo);var b=points.get(hi);double t=Math.max(0,Math.min(1,(station-a.distance())/(b.distance()-a.distance())));
     V edge=a.left().mul(a.halfWidth()*(1-t)).add(b.left().mul(b.halfWidth()*t));
     return new Sample(a.center().mul(1-t).add(b.center().mul(t)),edge.horizontalUnit(),station,edge.horizontalLength());
   }

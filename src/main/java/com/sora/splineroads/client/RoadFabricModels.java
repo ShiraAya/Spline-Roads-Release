@@ -48,9 +48,15 @@ final class RoadFabricModels {
     @SuppressWarnings("unchecked") private void emit(Object[] args)throws Throwable{
       Object context=args[4];var state=(BlockState)args[1];
       var data=terrain.getModelData((BlockAndTintGetter)args[0],(BlockPos)args[2],state,(ModelData)call(API.modelData,context));
+      var quads=roads.apply(data);
+      boolean hasCoverage=covered.test(data);
+      if(!hasCoverage&&(quads==null||quads.isEmpty())){
+        call(API.emitBlock,base,args);
+        return;
+      }
       var clipped=new ArrayList<Clipped>();
       Object transform=null;
-      if(covered.test(data)){
+      if(hasCoverage){
         Object finder=call(API.spriteFinder,null,Minecraft.getInstance().getModelManager().getAtlas(InventoryMenu.BLOCK_ATLAS));
         transform=Proxy.newProxyInstance(RoadFabricModels.class.getClassLoader(),new Class<?>[]{API.transform},(p,m,a)->{
           if(!m.getName().equals("transform"))return m.getName().equals("hashCode")?System.identityHashCode(p):m.getName().equals("equals")?p==a[0]:"SR road coverage";
@@ -64,10 +70,13 @@ final class RoadFabricModels {
         call(API.push,context,transform);
       }
       try{call(API.emitBlock,base,args);}finally{if(transform!=null)call(API.pop,context);}
-      Object emitter=call(API.emitter,context);
-      for(var piece:clipped){call(API.fromVanilla,emitter,piece.quad(),piece.material(),piece.cull());call(API.setTag,emitter,piece.tag());call(API.emit,emitter);}
-      var layer=(RenderType)call(API.layer,context);var quads=roads.apply(data);
-      if(quads==null||quads.isEmpty()||layer!=null&&layer!=RenderType.solid())return;
+      if(!clipped.isEmpty()){
+        Object emitter=call(API.emitter,context);
+        for(var piece:clipped){call(API.fromVanilla,emitter,piece.quad(),piece.material(),piece.cull());call(API.setTag,emitter,piece.tag());call(API.emit,emitter);}
+      }
+      if(quads==null||quads.isEmpty())return;
+      var layer=(RenderType)call(API.layer,context);
+      if(layer!=null&&layer!=RenderType.solid())return;
       // Pass an ordinary Forge carrier through the renderer's encoder. It is
       // roads-only, so CTM base quads are never emitted a second time.
       var overlay=new BakedModelWrapper<BakedModel>(terrain){

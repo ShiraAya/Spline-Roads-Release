@@ -15,6 +15,7 @@ final class RoadPlanningIndex {
   private Map<UUID,Map<Integer,RoadGantryRetention.Snapshot>> preservedGantries=Map.of();
   private record Previous(RoadRecord record,Mesh mesh){}
   private Map<UUID,Previous> dependencies=Map.of();
+  private Map<UUID,RoadIndex.Built> previousRoads=Map.of();
   private Set<UUID> newRoads=Set.of(),directlyEditedRoads=Set.of();
   /** Only immutable geometry and fixtures cross the history boundary, never a live Built. */
   record CycleNeighbor(Mesh mesh,List<RoadStructures.Part> structures){
@@ -42,6 +43,7 @@ final class RoadPlanningIndex {
     return cyclePlans.computeIfAbsent(chain.legs().get(0).road().id(),key->List.copyOf(build.get()));
   }
   void editHistory(List<RoadIndex.Built> candidates,Map<UUID,RoadIndex.Built> saved,Set<UUID> explicit){
+    previousRoads=Map.copyOf(saved);
     var previous=new HashMap<UUID,Previous>();
     var previousNeighbors=new HashMap<UUID,List<CycleNeighbor>>();
     var frozenNeighbors=new HashMap<UUID,CycleNeighbor>();
@@ -79,6 +81,44 @@ final class RoadPlanningIndex {
     // this narrower physical receipt is used only by the crossing planner.
     var spans=previous.record().settings().options().streetscape().crossings();
     return com.sora.splineroads.core.RoadsideBypass.sameSavedCrossingSurface(previous.mesh(),candidate.mesh,spans)?previous.record():null;
+  }
+  /** An incidental rebuild must not turn an unchanged remote, saved overlap into
+   * a new edit failure. Any changed road or new fixture near this pier revokes the proof. */
+  boolean unchangedFixedSupport(RoadIndex.Built candidate,RoadStructures.Part part){
+    var savedOwner=previousRoads.get(candidate.record.id());
+    if(savedOwner==null||!savedOwner.record.structures().contains(part))return false;
+    double margin=part.halfExtent()+6;
+    var area=new RoadBoundsIndex.Bounds(Math.min(part.a().x(),part.b().x())-margin,Math.min(part.a().z(),part.b().z())-margin,
+        Math.max(part.a().x(),part.b().x())+margin,Math.max(part.a().z(),part.b().z())+margin);
+    // Auto-junction rebuilding can enlist a whole split road as an explicit
+    // candidate even when only its remote end changes. Prove the physical local
+    // surface instead of treating transaction membership as a changed pier.
+    if(!localDeck(savedOwner.mesh,area).equals(localDeck(candidate.mesh,area))
+        ||savedOwner.mesh.settings().thickness()!=candidate.mesh.settings().thickness())return false;
+    for(var road:roads){
+      if(road.record.id().equals(candidate.record.id()))continue;
+      var old=previousRoads.get(road.record.id());
+      boolean nearby=road.mesh.max().x()>=area.minX()&&road.mesh.min().x()<=area.maxX()&&road.mesh.max().z()>=area.minZ()&&road.mesh.min().z()<=area.maxZ();
+      if(nearby&&!localDeck(road.mesh,area).isEmpty()&&(old==null||!localDeck(old.mesh,area).equals(localDeck(road.mesh,area))||old.mesh.settings().thickness()!=road.mesh.settings().thickness()
+          ||com.sora.splineroads.core.RoadStructureClearance.headroom(old.mesh)!=com.sora.splineroads.core.RoadStructureClearance.headroom(road.mesh)))return false;
+      // A beam can reach this pier from a road whose pavement is farther away.
+      for(var fixture:road.record.structures())if(old==null||!old.record.structures().contains(fixture)){
+        double pad=fixture.halfExtent();
+        if(Math.max(fixture.a().x(),fixture.b().x())+pad>=area.minX()&&Math.min(fixture.a().x(),fixture.b().x())-pad<=area.maxX()
+            &&Math.max(fixture.a().z(),fixture.b().z())+pad>=area.minZ()&&Math.min(fixture.a().z(),fixture.b().z())-pad<=area.maxZ())return false;
+      }
+    }
+    return true;
+  }
+  private static List<com.sora.splineroads.core.LaneDeck.Strip> localDeck(Mesh mesh,RoadBoundsIndex.Bounds area){
+    var result=new ArrayList<com.sora.splineroads.core.LaneDeck.Strip>();
+    for(int i=1;i<mesh.samples().size();i++){
+      var a=mesh.samples().get(i-1);var b=mesh.samples().get(i);double pad=Math.max(a.halfWidth(),b.halfWidth());
+      if(Math.max(a.center().x(),b.center().x())+pad<area.minX()||Math.min(a.center().x(),b.center().x())-pad>area.maxX()
+          ||Math.max(a.center().z(),b.center().z())+pad<area.minZ()||Math.min(a.center().z(),b.center().z())-pad>area.maxZ())continue;
+      result.addAll(com.sora.splineroads.core.LaneDeck.strips(mesh,a,b));
+    }
+    return result;
   }
   /** Failure-only diagnostics. This describes the saved surface proof, not the
    * separate obstacle comparison performed by the crossing planner. */

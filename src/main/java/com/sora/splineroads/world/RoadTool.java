@@ -41,15 +41,15 @@ public final class RoadTool extends Item {
 
   public static BlockPos endpointAtHit(
       Level level, BlockPos clicked, net.minecraft.world.phys.Vec3 hit) {
-    if (!RoadBlocks.isCollider(level.getBlockState(clicked)))
-      return clicked;
+    if (visibleEndpoint(level, clicked)) return clicked;
+    boolean collider=RoadBlocks.isCollider(level.getBlockState(clicked));
     BlockPos best = clicked;
     double nearest = .9;
     for (int dx = -1; dx <= 1; dx++)
       for (int dz = -1; dz <= 1; dz++)
         for (int dy = -2; dy <= 0; dy++) {
           BlockPos p = clicked.offset(dx, dy, dz);
-          if (level.getBlockEntity(p) instanceof NodeEntity node) {
+          if (level.getBlockEntity(p) instanceof NodeEntity node && node.visibleMarker() && (collider||node.junctionSource!=null)) {
             V v = node.node().position();
             double distance = Math.hypot(v.x() - hit.x, v.z() - hit.z);
             if (distance < nearest && hit.y - v.y() >= -.15 && hit.y - v.y() <= 2) {
@@ -59,6 +59,10 @@ public final class RoadTool extends Item {
           }
         }
     return best;
+  }
+
+  static boolean visibleEndpoint(Level level, BlockPos pos) {
+    return level.getBlockEntity(pos) instanceof NodeEntity node && node.visibleMarker();
   }
 
   public RoadTool() { super(new Properties().stacksTo(1)); }
@@ -72,12 +76,12 @@ public final class RoadTool extends Item {
     CompoundTag tool = context.getItemInHand().getOrCreateTag();
     try (var workChunks = RoadWorkChunks.open(level)) {
       if(!player.isShiftKeyDown()){var marker=AttachedPointTool.pick(player);if(marker!=null){OneSidedJunctions.selectedAttached(player,tool,marker.road(),marker.point());return InteractionResult.CONSUME;}}
-      if(!player.isShiftKeyDown()&&!(level.getBlockEntity(pos) instanceof NodeEntity)){
+      if(!player.isShiftKeyDown()&&!visibleEndpoint(level,pos)){
         var picked=pick(player);var hit=context.getClickLocation();
         var attached=picked==null?null:AttachedPointTool.nearest(picked,new V(hit.x,hit.y,hit.z));
         if(attached!=null&&(SideHosts.attachable(picked.record)||attached.elevated()&&ElevatedPointTool.supported(picked.record))){OneSidedJunctions.selectedAttached(player,tool,picked,attached);return InteractionResult.CONSUME;}
       }
-      if (level.getBlockEntity(pos) instanceof NodeEntity node) {
+      if (level.getBlockEntity(pos) instanceof NodeEntity node && node.visibleMarker()) {
         RoadData.requireOwner(player, node.owner);
         if(player.isShiftKeyDown()&&AutoJunctions.center(RoadData.get(level),pos)!=null)
           throw new IllegalArgumentException("这是路口中心，请用普通路口编辑器编辑；道路连接器用于接入路段");
@@ -117,6 +121,13 @@ public final class RoadTool extends Item {
         } else {
           BlockPos a = BlockPos.of(tool.getLong("Start"));
           if (a.equals(pos)) throw new IllegalArgumentException("请选另一个端点；Shift＋右键空气清除选择");
+          workChunks.node(a);
+          if(!(level.getBlockEntity(a) instanceof NodeEntity)){
+            tool.putLong("Start",pos.asLong());
+            tool.remove(CurveControlNodes.KEY);
+            player.displayClientMessage(Component.literal("原起点已失效，已将当前端点设为新起点 A"),true);
+            return InteractionResult.CONSUME;
+          }
           NodeEntity first = RoadData.requireNode(level, a, player);
           JunctionPointTool.requireDifferent(level,a,pos);
           if(TollRoads.reverseConnection(RoadData.get(level),a,pos)){

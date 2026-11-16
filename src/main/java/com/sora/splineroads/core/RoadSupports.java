@@ -57,19 +57,30 @@ public final class RoadSupports {
   /** Each surviving strip carries its own support; a cap may not bridge a cut slot.
    * Intersect the footprint across the cap's longitudinal width as well. */
   public static List<Sample> bearing(Mesh mesh,double station,double halfSpan){
-    var at=RoadStructures.sample(mesh,station);var bands=new ArrayList<LaneDeck.Span>(LaneDeck.spans(mesh,at));
+    var at=RoadStructures.sample(mesh,station);var bands=new ArrayList<>(solidBands(mesh,at));
     var probes=new TreeSet<Double>();probes.add(Math.max(0,station-halfSpan));probes.add(Math.min(mesh.length(),station+halfSpan));
     for(var c:mesh.settings().options().lanePoints().cuts())for(double edge:new double[]{c.begin(),c.end()})
       if(edge>station-halfSpan&&edge<station+halfSpan){probes.add(Math.max(0,edge-1e-5));probes.add(Math.min(mesh.length(),edge+1e-5));}
     for(double d:probes){
       var s=RoadStructures.sample(mesh,d);var next=new ArrayList<LaneDeck.Span>();
-      for(var x:bands)for(var y:LaneDeck.spans(mesh,s)){
+      for(var x:bands)for(var y:solidBands(mesh,s)){
         double lo=Math.max(x.low(),s.at(y.low(),0).sub(at.center()).dot(at.left()));
         double hi=Math.min(x.high(),s.at(y.high(),0).sub(at.center()).dot(at.left()));
         if(hi-lo>=2.4)next.add(new LaneDeck.Span(lo,hi,true,true));
       }bands=next;
     }
     return bands.stream().filter(b->b.high()-b.low()>=2.4).map(b->new Sample(at.at((b.low()+b.high())/2,0),at.left(),station,(b.high()-b.low())/2)).toList();
+  }
+  private static List<LaneDeck.Span> solidBands(Mesh mesh,Sample sample){
+    var out=new ArrayList<LaneDeck.Span>();
+    for(var span:LaneDeck.spans(mesh,sample)){
+      if(span.high()-span.low()<=1e-7)continue;
+      if(!out.isEmpty()&&span.low()<=out.get(out.size()-1).high()+1e-7){
+        var previous=out.remove(out.size()-1);
+        out.add(new LaneDeck.Span(previous.low(),span.high(),true,true));
+      }else out.add(span);
+    }
+    return out;
   }
   public static List<Part> clearStandard(Mesh mesh,double station,Ground ground){
     if(!LaneDeck.hasOpenings(mesh))return clearStandard(RoadStructures.sample(mesh,station),mesh.settings().thickness(),ground);

@@ -44,10 +44,11 @@ public final class SmartSidewalks {
     var editedIds=new HashSet<java.util.UUID>();dirty.forEach(r->editedIds.add(r.record.id()));
     var unchanged=new HashMap<Long,List<RoadIndex.Built>>();
     for(var r:roads)if(!editedIds.contains(r.record.id()))for(long chunk:r.chunks)unchanged.computeIfAbsent(chunk,k->new ArrayList<>()).add(r);
+    var affectedNear=new Nearby(dirty);var bordersNear=new Nearby(roads);
     for(var e:previous.entrySet()){
       if(aprons.contains(e.getKey()))continue;
       var p=BlockPos.of(e.getKey());var point=new com.sora.splineroads.core.RoadGeometry.V(p.getX()+.5,p.getY()+1,p.getZ()+.5);
-      boolean affected=dirty.stream().anyMatch(r->{var q=RoadQueries.horizontal(r.mesh,point);return Math.abs(point.y()-q.sample().center().y())<2&&point.sub(q.sample().center()).horizontalLength()<=q.sample().halfWidth()+r.record.settings().options().sidewalk().width()+2;});
+      boolean affected=affectedNear.at(p).stream().anyMatch(r->{var q=RoadQueries.horizontal(r.mesh,point);return Math.abs(point.y()-q.sample().center().y())<2&&point.sub(q.sample().center()).horizontalLength()<=q.sample().halfWidth()+r.record.settings().options().sidewalk().width()+2;});
       boolean retained=unchanged.getOrDefault(net.minecraft.world.level.ChunkPos.asLong(p.getX()>>4,p.getZ()>>4),List.of()).stream().anyMatch(r->{
         var c=r.record.settings().options().sidewalk();if(!c.enabled()||r.record.settings().options().streetscape().apron()!=RoadStreetscape.Apron.ROAD)return false;
         var q=RoadQueries.horizontal(r.mesh,point);int side=q.lateral()<0?-1:1;
@@ -55,7 +56,7 @@ public final class SmartSidewalks {
         double edge=q.sample().halfWidth()+RoadSidewalks.walkWidth(r.mesh,c,q.sample(),side);
         return Math.abs(point.y()-q.sample().center().y())<1.1&&Math.abs(Math.abs(q.lateral())-edge)<1.6&&q.horizontalDistance()<edge+1.6;
       });
-      if(retained||!affected&&roads.stream().anyMatch(r->ownsBorder(r,p)))result.putIfAbsent(e.getKey(),e.getValue());
+      if(retained||!affected&&bordersNear.at(p).stream().anyMatch(r->ownsBorder(r,p)))result.putIfAbsent(e.getKey(),e.getValue());
     }
     var byChunk=new HashMap<Long,List<RoadIndex.Built>>();for(var r:roads)for(long chunk:r.chunks)byChunk.computeIfAbsent(chunk,k->new ArrayList<>()).add(r);
     for(var r:edited){var c=r.record.settings().options().sidewalk();if(!c.enabled()||!c.smooth()||r.record.settings().options().streetscape().apron()!=RoadStreetscape.Apron.ROAD||r.record.settings().structure()==com.sora.splineroads.core.RoadGeometry.Structure.TUNNEL)continue;
@@ -69,7 +70,10 @@ public final class SmartSidewalks {
         if(terrain.hasBlockEntity()||!terrain.getFluidState().isEmpty()||!net.minecraft.world.level.block.Block.isShapeFullBlock(terrain.getCollisionShape(level,p)))continue;
         if(!paving.near(new com.sora.splineroads.core.RoadGeometry.V(p.getX()+.5,p.getY()+1,p.getZ()+.5),c.width()+4))continue;
         boolean blocked=false;
-        for(var other:byChunk.getOrDefault(net.minecraft.world.level.ChunkPos.asLong(p.getX()>>4,p.getZ()>>4),List.of()))if(other.columns.containsKey(BlockPos.asLong(p.getX(),0,p.getZ()))){var col=other.columns.get(BlockPos.asLong(p.getX(),0,p.getZ()));if(p.getY()+1>col.minTop()+1e-6&&p.getY()<col.maxTop()+4.25){blocked=true;break;}}
+        // A one-cell border query must not materialize every collision cell of
+        // an otherwise untouched neighboring road. column() uses the same exact
+        // deck raster locally, and reuses a full raster when one already exists.
+        for(var other:byChunk.getOrDefault(net.minecraft.world.level.ChunkPos.asLong(p.getX()>>4,p.getZ()>>4),List.of())){var col=other.column(p);if(col!=null&&p.getY()+1>col.minTop()+1e-6&&p.getY()<col.maxTop()+4.25){blocked=true;break;}}
         if(!blocked)put(result,materials,cell,ring);
       }
     }return result;
@@ -81,6 +85,33 @@ public final class SmartSidewalks {
     if(c.side()==RoadSidewalks.Side.LEFT&&side>0||c.side()==RoadSidewalks.Side.RIGHT&&side<0)return false;
     double edge=q.sample().halfWidth()+RoadSidewalks.walkWidth(road.mesh,c,q.sample(),side);
     return Math.abs(point.y()-q.sample().center().y())<1.1&&Math.abs(Math.abs(q.lateral())-edge)<1.6&&q.horizontalDistance()<edge+1.6;
+  }
+  /** Conservative horizontal segment capsules. The exact projection tests above
+   * still decide membership, including endpoints and graded/variable-width walks. */
+  private static final class Nearby {
+    private final Map<Long,List<RoadIndex.Built>> bins=new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    Nearby(Collection<RoadIndex.Built> roads){
+      for(var road:roads){
+        var config=road.record.settings().options().sidewalk();var ends=road.mesh.settings().options().ends();
+        double width=config.width();
+        // walkBlend is base + (start-base)*a + (end-base)*b, with a,b in [0,1].
+        // Sum absolute changes so even overlapping transition zones are covered.
+        if(ends.start()!=null&&ends.start().sidewalk()!=null)width+=Math.abs(ends.start().sidewalk().width()-config.width());
+        if(ends.end()!=null&&ends.end().sidewalk()!=null)width+=Math.abs(ends.end().sidewalk().width()-config.width());
+        var keys=new it.unimi.dsi.fastutil.longs.LongOpenHashSet();var previous=road.mesh.first();
+        for(var next:road.mesh.samples()){
+          double radius=Math.max(previous.halfWidth(),next.halfWidth())+width+3;
+          int x0=(int)Math.floor(Math.min(previous.center().x(),next.center().x())-radius)>>8;
+          int x1=(int)Math.floor(Math.max(previous.center().x(),next.center().x())+radius)>>8;
+          int z0=(int)Math.floor(Math.min(previous.center().z(),next.center().z())-radius)>>8;
+          int z1=(int)Math.floor(Math.max(previous.center().z(),next.center().z())+radius)>>8;
+          for(int x=x0;x<=x1;x++)for(int z=z0;z<=z1;z++)keys.add(net.minecraft.world.level.ChunkPos.asLong(x,z));
+          previous=next;
+        }
+        for(long key:keys)bins.computeIfAbsent(key,ignored->new ArrayList<>()).add(road);
+      }
+    }
+    List<RoadIndex.Built> at(BlockPos p){return bins.getOrDefault(net.minecraft.world.level.ChunkPos.asLong(p.getX()>>8,p.getZ()>>8),List.of());}
   }
   private static void put(Map<Long,BlockState> result,Map<String,BlockState> materials,RoadSidewalks.Cell cell,RoadSidewalks.Config config) {
     if(config.smooth())return;

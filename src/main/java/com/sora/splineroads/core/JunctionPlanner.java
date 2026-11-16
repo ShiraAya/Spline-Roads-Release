@@ -13,21 +13,28 @@ public final class JunctionPlanner {
   public record Plan(List<Piece> pieces, List<Movement> movements, List<V> boundary, Map<RoadSidewalks.Cell,RoadSidewalks.Config> sidewalks,JunctionSignalCycle signals,Map<Part,JunctionSignals.Head> heads) {}
   /** Retain this piece, not a lookup that rebuilds a whole junction after LRU eviction. */
   public static final class Ref {
+    // A live road already retains this plan's geometry through its piece and
+    // shared metadata. Keep the plan identity alive too, including oversized
+    // junctions that intentionally do not enter the strong cache.
+    private final Plan retainedPlan;
     private final JunctionSpec spec;private final int piece,geometryVersion;private final JunctionSlipProfiles slipProfiles;
     private final List<OneSidedJunction.Cut> hostCuts;
+    private final int triangleWalls;
     private final List<Mesh> approaches,slips,refuges;private final Piece resolved;private final List<V> boundary;private final JunctionSignalCycle signals;private final Map<Part,JunctionSignals.Head> heads;private final Map<RoadSidewalks.Cell,RoadSidewalks.Config> sidewalks;
-    public Ref(JunctionSpec spec,int piece){this(spec,piece,55);}
+    public Ref(JunctionSpec spec,int piece){this(spec,piece,56);}
     public Ref(JunctionSpec spec,int piece,int version){
       this(spec,piece,version,List.of());
     }
     public Ref(JunctionSpec spec,int piece,int version,List<OneSidedJunction.Cut> hostCuts){
-      if(version<21||version>55||piece<0)throw new IllegalArgumentException("路口分段无效");
+      if(version<21||version>56||piece<0)throw new IllegalArgumentException("路口分段无效");
       if(version>=50)spec=spec.supportedCrossings();
       var plan=plan(spec,version);if(piece>=plan.pieces().size())throw new IllegalArgumentException("路口分段无效");
+      retainedPlan=plan;
       slipProfiles=version>=49&&JunctionSlips.enabled(spec)?new JunctionSlipProfiles(spec,plan(spec,47).pieces().subList(0,spec.arms().size()).stream().map(Piece::mesh).toList(),version>=52,version>=54):null;
       approaches=plan.pieces().subList(0,spec.arms().size()).stream().map(Piece::mesh).toList();
       slips=JunctionSlips.meshes(plan);refuges=plan.pieces().stream().filter(p->p.arm()==-1).map(Piece::mesh).toList();
       this.hostCuts=List.copyOf(hostCuts);
+      triangleWalls=spec.kind()==Kind.INTERSECTION?TRIANGLE_WALLS.get(plan,JunctionPlanner::triangleWalls)[piece]:-1;
       if(!hostCuts.isEmpty()&&(version<54||spec.oneSide()==null||plan.pieces().get(piece).arm()!=-3))throw new IllegalArgumentException("共享主路裁剪数据无效");
       this.spec=spec;this.piece=piece;geometryVersion=version;resolved=hostCuts.isEmpty()?plan.pieces().get(piece):OneSidedJunction.retained(spec.oneSide(),hostCuts);boundary=plan.boundary();signals=plan.signals();heads=plan.heads();sidewalks=plan.sidewalks();
     }
@@ -40,7 +47,7 @@ public final class JunctionPlanner {
     public List<Mesh> slips(){return slips;}
     public List<Mesh> refuges(){return refuges;}
     public List<Mesh> replacedCycleStrips(){return slipProfiles==null?List.of():slipProfiles.refugeStrips();}
-    public Piece get(){return resolved;}public List<V> boundary(){return boundary;}public JunctionSignalCycle signals(){return signals;}
+    public int triangleWalls(){return triangleWalls;} public Piece get(){return resolved;}public List<V> boundary(){return boundary;}public JunctionSignalCycle signals(){return signals;}
     public Map<RoadSidewalks.Cell,RoadSidewalks.Config> sidewalks(){return sidewalks;}
     public int headState(Part part,long time){
       if(part.material()==Material.SIGNAL_PEDESTRIAN)return signals.pedestrian(resolved.arm(),time);
@@ -55,16 +62,56 @@ public final class JunctionPlanner {
     @Override public boolean equals(Object other){return other instanceof Ref r&&piece==r.piece&&geometryVersion==r.geometryVersion&&spec.equals(r.spec)&&hostCuts.equals(r.hostCuts);}
     @Override public int hashCode(){return Objects.hash(spec,piece,geometryVersion,hostCuts);}
   }
+  private record TriangleEdge(V a,V b){
+    TriangleEdge{
+      if(a.x()>b.x()||a.x()==b.x()&&a.z()>b.z()){V point=a;a=b;b=point;}
+    }
+  }
+  private static final WeakIdentityCache<Plan,int[]> TRIANGLE_WALLS=new WeakIdentityCache<>(48,20_000,v->v.length);
+  private static int[] triangleWalls(Plan plan){
+    var vertices=new HashMap<Integer,List<TriangleEdge>>();var counts=new HashMap<TriangleEdge,Integer>();
+    for(int i=0;i<plan.pieces().size();i++){
+      var piece=plan.pieces().get(i);var mesh=piece.mesh();
+      if(piece.arm()!=-1||mesh.samples().size()!=2||mesh.first().halfWidth()!=0)continue;
+      var end=mesh.last();
+      var a=vertexKey(mesh.first().center());var b=vertexKey(end.at(end.halfWidth(),0));var c=vertexKey(end.at(-end.halfWidth(),0));
+      var edges=List.of(new TriangleEdge(a,b),new TriangleEdge(b,c),new TriangleEdge(c,a));
+      vertices.put(i,edges);for(var edge:edges)counts.merge(edge,1,Integer::sum);
+    }
+    var result=new int[plan.pieces().size()];Arrays.fill(result,-1);
+    vertices.forEach((slot,edges)->{
+      int walls=0;for(int side=0;side<3;side++)if(counts.get(edges.get(side))==1)walls|=1<<side;
+      result[slot]=walls;
+    });
+    return result;
+  }
+  private static V vertexKey(V p){
+    return new V(Math.rint(p.x()*1e6),Math.rint(p.y()*1e6),Math.rint(p.z()*1e6));
+  }
   private record PlanKey(JunctionSpec spec,int version){}
   // Six entries thrash when several junctions' pieces arrive interleaved. Keep
   // a bounded working set and deduplicate identical in-flight plans without
   // blocking unrelated junctions behind one expensive build.
   private static final BoundedLoadingCache<PlanKey,Plan> CACHE = new BoundedLoadingCache<>(48,32L<<20,JunctionPlanner::planBytes);
+  private static final Map<PlanKey,java.lang.ref.WeakReference<Plan>> LIVE = new LinkedHashMap<>(64,.75f,true){
+    protected boolean removeEldestEntry(Map.Entry<PlanKey,java.lang.ref.WeakReference<Plan>> e){return size()>96;}
+  };
   private static long planBytes(Plan p){long bytes=4096+p.boundary().size()*64L+p.sidewalks().size()*128L+p.heads().size()*256L;
     for(var piece:p.pieces()){bytes+=piece.mesh().samples().size()*256L+piece.structures().size()*512L;for(var face:piece.paint())bytes+=128+face.points().size()*64L;}
     for(var movement:p.movements())bytes+=128+movement.path().size()*64L;return bytes;}
-  public static Plan plan(JunctionSpec s) {return plan(s,55);}
-  private static Plan plan(JunctionSpec s,int version) { return CACHE.get(new PlanKey(s,version),k->build(k.spec(),k.version())); }
+  public static Plan plan(JunctionSpec s) {return plan(s,56);}
+  private static Plan plan(JunctionSpec s,int version) {
+    var key=new PlanKey(s,version);
+    synchronized(LIVE){var ref=LIVE.get(key);var plan=ref==null?null:ref.get();if(plan!=null)return plan;}
+    return CACHE.get(key,k->{
+      // Recheck after in-flight coordination, without holding a global lock
+      // while another independent junction is being planned.
+      synchronized(LIVE){var ref=LIVE.get(k);var plan=ref==null?null:ref.get();if(plan!=null)return plan;}
+      var plan=build(k.spec(),k.version());
+      synchronized(LIVE){LIVE.put(k,new java.lang.ref.WeakReference<>(plan));}
+      return plan;
+    });
+  }
   public static Settings settings(double width,double thick) {
     return new Settings(Mode.STRAIGHT,Style.UNMARKED,width,thick,.35,90).structure(Structure.GROUND);
   }
@@ -314,7 +361,7 @@ public final class JunctionPlanner {
       }
     }
     for(int i=0;i<approaches.size();i++){var old=pieces.get(i);var parts=new ArrayList<>(old.structures());parts.addAll(geometryVersion>=29?RoadSidewalks.parts(old.mesh(),s.arms().get(i).external().options().sidewalk(),null,old.structures()):RoadSidewalks.parts(old.mesh(),s.arms().get(i).external().options().sidewalk()));pieces.set(i,new Piece(old.mesh(),old.paint(),List.copyOf(parts),old.arm()));}
-    if(pieces.size()>approaches.size()){int i=approaches.size();var old=pieces.get(i);var parts=new ArrayList<>(old.structures());parts.addAll(geometryVersion>=36?RoadSidewalks.taperedJunctionParts(s,approaches,boundary):RoadSidewalks.junctionParts(s,approaches,boundary,geometryVersion>=32,geometryVersion>=33,geometryVersion>=34));pieces.set(i,new Piece(old.mesh(),old.paint(),List.copyOf(parts),old.arm()));}
+    if(pieces.size()>approaches.size()){int i=approaches.size();var old=pieces.get(i);var parts=new ArrayList<>(old.structures());parts.addAll(geometryVersion>=36?RoadSidewalks.taperedJunctionParts(s,approaches,boundary,geometryVersion>=56):RoadSidewalks.junctionParts(s,approaches,boundary,geometryVersion>=32,geometryVersion>=33,geometryVersion>=34));pieces.set(i,new Piece(old.mesh(),old.paint(),List.copyOf(parts),old.arm()));}
     if(geometryVersion>=34){var trims=TactilePaths.trims(s,approaches,boundary);
       for(int i=0;i<approaches.size();i++){var old=pieces.get(i);pieces.set(i,new Piece(old.mesh(),old.paint(),TactilePaths.trimApproach(old.structures(),old.mesh(),i,trims),old.arm()));}}
     if(geometryVersion>=41){var surface=new TactileSurface(pieces.stream().flatMap(p->p.structures().stream()).toList());

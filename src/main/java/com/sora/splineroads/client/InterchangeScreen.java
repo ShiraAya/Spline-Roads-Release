@@ -112,14 +112,7 @@ public final class InterchangeScreen extends Screen {
     if (payload.getBoolean("Partial")) status = "立交已有路段被单独删除；整体更新将重新生成完整布局";
     if (!com.sora.splineroads.world.HostAxes.presets(payload)
         .contains(options.preset())) {
-      options =
-          changed(
-              com.sora.splineroads.world.HostAxes.presets(payload).get(0),
-              options.leftTraffic(),
-              options.lanes(),
-              options.rampWidth(),
-              options.adjustEndpoints());
-      status = HostAxes.retiredInterchange(payload)?HostAxes.RETIRED_MESSAGE:"旧布局已停用；更新时将使用当前预设，也可仅删除匝道保留主路";
+      status = "所选样式暂不适用当前道路，已保留原选择；请调整道路或手动选择其他样式";
     }
   }
 
@@ -177,7 +170,7 @@ public final class InterchangeScreen extends Screen {
         width,
         adjust,
         options.allowShrink(),
-        options.maxLowering(), options.junctionAxis(),options.loopMask(),options.allowAbove(),options.flatConnector(),options.connectorHeight(),options.toll());
+        options.maxLowering(), options.junctionAxis(),options.loopMask(),options.allowAbove(),options.flatConnector(),options.connectorHeight(),options.toll(),options.trumpetStyle());
   }
 
   private boolean highway(int axis){return RoadProfile.catalog(RoadRecord.readSettings(payload.getCompound("Main"+(axis+1)))).type()==RoadProfile.Type.HIGHWAY;}
@@ -235,17 +228,7 @@ public final class InterchangeScreen extends Screen {
     top = Math.max(4, (height - panelHeight) / 2);
     control = Math.min(306, (int)((panel - 36) * .54));
     int x = left + 12, y = top + 26, w = control, half = (w - 8) / 2, third = (w - 8) / 3;
-    if(HostAxes.retiredInterchange(payload)){
-      status=HostAxes.RETIRED_MESSAGE;needsPlan=false;initializing=false;page=0;
-      save=addRenderableWidget(Button.builder(Component.literal("曲线立交建造已撤下"),b->{}).bounds(x,y,w,20).build());save.active=false;
-      preview=save;
-      addRenderableWidget(Button.builder(Component.literal("关闭"),b->onClose()).bounds(x,y+28,w,20).build());
-      if(payload.hasUUID("Id"))for(int i=0;i<2;i++){
-        String action=i==0?"interchangeDeleteRamps":"interchangeDelete";String label=i==0?"仅删匝道，保留主路":"删除整座";
-        addRenderableWidget(Button.builder(Component.literal(label),b->{if(!action.equals(deleteConfirmation)){deleteConfirmation=action;b.setMessage(Component.literal("确认："+label));}else submit(action);}).bounds(x,y+56+i*28,w,20).build());
-      }
-      return;
-    }
+
     int tabs=3,tw=(w-4*(tabs-1))/tabs;
     tab("布局 / 匝道", x, y, tw, 0);
     if(!parallel){tab("主路样式", x + tw + 4, y, tw, 1);
@@ -320,6 +303,10 @@ public final class InterchangeScreen extends Screen {
         button("绕圈左转："+names+" ▸",x+half+8,y+24,half,()->{
           var masks=List.of(5,10,3,6,12,9);options=options.loops(masks.get((masks.indexOf(options.loopMask())+1)%masks.size()));
         });
+      }
+      if(options.preset()==InterchangePlanner.Preset.TRUMPET||options.preset()==InterchangePlanner.Preset.DOUBLE_TRUMPET){
+        heights.visible=false;
+        button(options.trumpetStyle().label+" ▸",x+half+8,y+24,half,()->options=options.trumpet(options.trumpetStyle()==InterchangePlanner.TrumpetStyle.A?InterchangePlanner.TrumpetStyle.B:InterchangePlanner.TrumpetStyle.A));
       }
       updateHeightLabel();
       button(
@@ -628,7 +615,7 @@ public final class InterchangeScreen extends Screen {
               number("rampWidth", options.rampWidth()),
               options.adjustEndpoints(),
               options.allowShrink(),
-              options.maxLowering(), options.junctionAxis(),options.loopMask(),options.allowAbove(),options.flatConnector(),number("connectorHeight",options.connectorHeight()),tollName==null?options.toll():options.toll().named(tollName.getValue()));
+              options.maxLowering(), options.junctionAxis(),options.loopMask(),options.allowAbove(),options.flatConnector(),number("connectorHeight",options.connectorHeight()),tollName==null?options.toll():options.toll().named(tollName.getValue()),options.trumpetStyle());
       if (page==1) {
         var old=mainSettings();var next=InterchangeStyleOptions.capture(old.options(),this::number);
         double lane=RoadProfile.layout(old,old.width()).laneWidth();
@@ -679,7 +666,6 @@ public final class InterchangeScreen extends Screen {
   }
 
   private void calculate() {
-    if(HostAxes.retiredInterchange(payload)){needsPlan=false;status=HostAxes.RETIRED_MESSAGE;return;}
     if (!capture()) {
       needsPlan = false;
       return;
@@ -769,19 +755,9 @@ public final class InterchangeScreen extends Screen {
     boolean deletion = !action.equals("interchange");
     if (pending || !deletion && (plan == null || needsPlan || computing)) return;
     persist();
-    CompoundTag t = new CompoundTag();
-    for (String key : List.of("Id", "Points", "Options", "Main1", "Main2", "Main3"))
-      if (payload.contains(key)) t.put(key, payload.get(key).copy());
-    t.putString("Action", action);
+    CompoundTag t = Interchanges.command(payload,plan,action);
     pending = true;
     save.active = false;
-    t.putInt("SourceAxesHash",com.sora.splineroads.world.HostAxes.signature(payload));
-    t.put("SourceNodes", payload.getList("Nodes", Tag.TAG_COMPOUND).copy());
-    if (plan != null) {
-      ListTag targets = new ListTag();
-      plan.anchors().forEach(node -> targets.add(RoadRecord.writeNode(node)));
-      t.put("FittedNodes", targets);
-    }
     status =
         deletion
             ? "正在删除并恢复地形…"
@@ -795,7 +771,7 @@ public final class InterchangeScreen extends Screen {
   public void failed(String reason) {
     pending = false;
     status = reason;
-    save.active = plan != null&&!HostAxes.retiredInterchange(payload);
+    save.active = plan != null;
   }
 
   @Override

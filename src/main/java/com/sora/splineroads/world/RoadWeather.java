@@ -11,7 +11,11 @@ import net.minecraftforge.fml.common.Mod;
 /** Refresh old saved precipitation heights after dynamic road blocks became solid. */
 @Mod.EventBusSubscriber(modid=SplineRoads.ID)
 public final class RoadWeather {
-  @SubscribeEvent public static void loaded(ChunkEvent.Load event){refresh(event.getChunk());}
+  @SubscribeEvent public static void loaded(ChunkEvent.Load event){
+    // Chunk packets already contain the server's corrected precipitation map.
+    // The two server-only heightmaps are never used for client precipitation.
+    if(!event.getLevel().isClientSide())refresh(event.getChunk());
+  }
   public static boolean refresh(ChunkAccess chunk){
     boolean road=false;
     for(var section:chunk.getSections())if(section.maybeHas(RoadBlocks::isCollider)){road=true;break;}

@@ -27,22 +27,89 @@ public final class ElevatedAccessRoads {
     for(var reservation:access){cuts.addAll(reservation.cuts());adds.addAll(reservation.additions());}
     return lanes.cuts(cuts).additions(adds).access(access);
   }
+  static RoadRecord refit(RoadData data,RoadRecord road,Set<UUID> replaced){
+    var lanes=LaneTopology.metadata(road);
+    if(lanes.access().isEmpty())return road;
+    var cuts=new ArrayList<>(lanes.cuts());
+    var reservations=new ArrayList<ElevatedAccess.Reservation>();
+    boolean changed=false;
+    for(var reservation:lanes.access()){
+      var connector=data.index.roads.get(reservation.connection());
+      if(connector==null||replaced.contains(reservation.connection())){reservations.add(reservation);continue;}
+      var fit=ElevatedAccess.fit(road.rawMesh(),connector.mesh,reservation);
+      reservations.add(fit);
+      if(fit.equals(reservation))continue;
+      changed=true;
+      cuts.removeIf(c->c.connection().equals(reservation.connection()));
+      cuts.addAll(fit.cuts());
+    }
+    return changed?road.withLanePoints(lanes.access(reservations).cuts(cuts)):road;
+  }
   static void protect(RoadData data,List<RoadIndex.Built> proposed,Set<UUID> removed){
-    var all=LaneTopology.records(data);removed.forEach(all::remove);for(var b:proposed)all.put(b.record.id(),b.record);
-    for(var entry:data.interchanges.entrySet())if(entry.getValue().getBoolean("ElevatedAccess")&&all.containsKey(entry.getKey())){
-      var t=entry.getValue();var old=data.index.roads.get(t.getUUID("Main"));var next=all.get(t.getUUID("Main"));
+    var changed=new HashMap<UUID,RoadRecord>();for(var b:proposed)changed.put(b.record.id(),b.record);
+    for(var entry:data.interchanges.entrySet())if(entry.getValue().getBoolean("ElevatedAccess")&&after(data,changed,removed,entry.getKey())!=null){
+      var t=entry.getValue();var old=data.index.roads.get(t.getUUID("Main"));var next=after(data,changed,removed,t.getUUID("Main"));
       if(old==null||next==null)throw new IllegalArgumentException("主路仍连接高架，请同时删除依赖的高架连接");
       if(!sameGeometry(old.record,next)||next.settings().options().attachments().points().stream().noneMatch(p->p.id().equals(t.getUUID("Point"))&&p.elevated()))
         throw new IllegalArgumentException("主路已有高架出入口；改变主路线形或断面前，请先删除该连接");
-      for(UUID member:members(t))if(!member.equals(next.id())){
-        var prior=data.index.roads.get(member);var proposedRoad=all.get(member);
-        if(prior==null||proposedRoad==null||!sameGeometry(prior.record,proposedRoad))throw new IllegalArgumentException("此段承载相邻高架出入口的辅路，请先删除连接");
+      // Historical receipts can retain a removed/split host. An unrelated edit
+      // must not validate that stale member as though it were being removed now.
+      for(UUID member:members(t))if(!member.equals(next.id())&&(changed.containsKey(member)||removed.contains(member))){
+        var prior=data.index.roads.get(member);var proposedRoad=after(data,changed,removed,member);
+        if(prior==null||proposedRoad==null||!sameAccessGeometry(prior.record,proposedRoad,entry.getKey()))throw new IllegalArgumentException("此段承载相邻高架出入口的辅路，请先删除连接");
       }
-      var end=BlockPos.of(t.getLong("Endpoint"));var neighbors=all.values().stream().filter(r->!r.id().equals(entry.getKey())&&(r.a().equals(end)||r.b().equals(end))).toList();
-      if(neighbors.size()>1||neighbors.isEmpty()&&!data.index.atNode(end).stream().allMatch(entry.getKey()::equals))throw new IllegalArgumentException("高架出入口只能连接道路尽头，不能把此端点改成多路交汇");
+      var end=BlockPos.of(t.getLong("Endpoint"));
+      var oldNeighbors=data.index.atNode(end);
+      var ids=new HashSet<>(oldNeighbors);ids.addAll(changed.keySet());ids.remove(entry.getKey());
+      var neighbors=ids.stream().map(id->after(data,changed,removed,id)).filter(Objects::nonNull)
+          .filter(r->r.a().equals(end)||r.b().equals(end)).toList();
+      if(neighbors.size()>1&&neighbors.stream().anyMatch(r->!oldNeighbors.contains(r.id())))
+        throw new IllegalArgumentException("高架出入口只能连接道路尽头，不能把此端点改成多路交汇");
       for(var r:neighbors){var before=data.index.roads.get(r.id());if(before==null||!sameGeometry(before.record,r))throw new IllegalArgumentException("该道路尽头连接高架出入口，请先删除连接再改变其线形或断面");}
     }
   }
+  private static RoadRecord after(RoadData data,Map<UUID,RoadRecord> changed,Set<UUID> removed,UUID id){
+    var next=changed.get(id);
+    if(next!=null||removed.contains(id))return next;
+    var current=data.index.roads.get(id);
+    return current==null?null:current.record;
+  }
+
+  /** A neighbouring street may carry only a short continuation of the access.
+   * Keep that occupied ribbon fixed, while allowing its remote end to join a junction. */
+  private static boolean sameAccessGeometry(RoadRecord a,RoadRecord b,UUID connection){
+    if(sameGeometry(a,b))return true;
+    var reservations=LaneTopology.metadata(a).access().stream().filter(r->r.connection().equals(connection)).toList();
+    if(reservations.isEmpty()||LaneTopology.metadata(b).access().stream().noneMatch(r->r.connection().equals(connection)))return false;
+    if(a.settings().style()!=b.settings().style()||a.settings().thickness()!=b.settings().thickness()
+        ||a.settings().options().leftTraffic()!=b.settings().options().leftTraffic()
+        ||!RoadLanes.counts(a.settings()).equals(RoadLanes.counts(b.settings())))return false;
+    var x=a.rawMesh();var y=b.rawMesh();double from=Double.POSITIVE_INFINITY,to=Double.NEGATIVE_INFINITY;
+    for(var r:reservations){
+      for(var c:r.cuts()){from=Math.min(from,Math.min(c.begin(),c.end())-c.transition());to=Math.max(to,Math.max(c.begin(),c.end())+c.transition());}
+      for(var c:r.additions()){
+        if(!Double.isFinite(c.end()))return false;
+        from=Math.min(from,Math.min(c.station(),c.end())-c.transition());to=Math.max(to,Math.max(c.station(),c.end())+c.transition());
+      }
+      for(var g:r.gaps()){from=Math.min(from,g.from());to=Math.max(to,g.to());}
+    }
+    if(!Double.isFinite(from)||!Double.isFinite(to))return false;
+    from=Math.max(0,from-2);to=Math.min(x.length(),to+2);
+    if(to>y.length()+1e-9)return false;
+    var oldEnds=a.settings().options().ends();var newEnds=b.settings().options().ends();
+    if(newEnds.trimmedStart()-oldEnds.trimmedStart()>from+1e-9
+        ||newEnds.trimmedEnd()-oldEnds.trimmedEnd()>x.length()-to+1e-9)return false;
+    var stations=new TreeSet<Double>();stations.add(from);stations.add(to);
+    for(var p:x.samples())if(p.distance()>from&&p.distance()<to)stations.add(p.distance());
+    for(var p:y.samples())if(p.distance()>from&&p.distance()<to)stations.add(p.distance());
+    for(double at:stations){
+      var p=RoadStructures.sample(x,at);var q=RoadStructures.sample(y,at);
+      if(p.center().distance(q.center())>1e-8||p.left().distance(q.left())>1e-8||!sameMeasure(p.halfWidth(),q.halfWidth())
+          ||!RoadProfile.layout(x,p).equals(RoadProfile.layout(y,q)))return false;
+    }
+    return true;
+  }
+
   private static boolean sameGeometry(RoadRecord a,RoadRecord b){return sameNode(a.start(),b.start())&&sameNode(a.end(),b.end())
       &&sameSamples(a.rawMesh().samples(),b.rawMesh().samples())&&a.settings().thickness()==b.settings().thickness()
       &&a.settings().style()==b.settings().style()&&RoadLanes.counts(a.settings()).equals(RoadLanes.counts(b.settings()))
@@ -63,10 +130,12 @@ public final class ElevatedAccessRoads {
         &&sameTerminal(x.start(),y.start(),a,b)&&sameTerminal(x.end(),y.end(),a,b);
   }
   private static boolean sameTerminal(RoadTransitions.Section a,RoadTransitions.Section b,Settings ownA,Settings ownB){
-    if(Objects.equals(a,b))return true;if(a!=null&&b!=null)return false;
+    if(Objects.equals(a,b))return true;
     var x=a==null?RoadTransitions.Section.of(ownA):a;var y=b==null?RoadTransitions.Section.of(ownB):b;
     var wx=x.sidewalk()==null?RoadSidewalks.Config.DEFAULT:x.sidewalk();var wy=y.sidewalk()==null?RoadSidewalks.Config.DEFAULT:y.sidewalk();
-    if(wx.enabled()!=wy.enabled()||wx.enabled()&&!wx.equals(wy)||x.cycle()!=y.cycle()||x.curb()!=y.curb()||x.cycleRail()!=y.cycleRail()||x.outerRail()!=y.outerRail()||x.cycleAsphalt()!=y.cycleAsphalt()||!Objects.equals(x.streetscape(),y.streetscape()))return false;
+    // Cached raised/tunnel/planting spans are regenerated when a nearby road is
+    // built. They are not a change to the host's physical terminal section.
+    if(wx.enabled()!=wy.enabled()||wx.enabled()&&!wx.equals(wy)||x.cycle()!=y.cycle()||x.curb()!=y.curb()||x.cycleRail()!=y.cycleRail()||x.outerRail()!=y.outerRail()||x.cycleAsphalt()!=y.cycleAsphalt())return false;
     var lx=x.layout(ownA.options().leftTraffic());var ly=y.layout(ownB.options().leftTraffic());
     if(!lx.catalog().equals(ly.catalog())||lx.outside()!=ly.outside())return false;
     double[] ax={x.width(),lx.laneWidth(),lx.median(),lx.motorMin(),lx.motorMax(),lx.cycleWidth(),lx.curbWidth(),lx.shoulderWidth(),lx.medianCenter(),x.port()==null?lx.curbWidth():x.port().curbLeft(),x.port()==null?lx.curbWidth():x.port().curbRight()};

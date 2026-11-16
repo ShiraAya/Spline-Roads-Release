@@ -11,6 +11,7 @@ public final class MultiInterchange {
   private final Node[] anchors;
   private final Settings[] settings;
   private final Options options;
+  private final java.util.function.UnaryOperator<V> conformance;
   private final int n;
   private final V center;
   private final V[] radial;
@@ -51,8 +52,8 @@ public final class MultiInterchange {
       return best;
     }
   }
-  private MultiInterchange(Node[] nodes,Settings[] main,Options options,double baseHeight){
-    anchors=nodes.clone();n=nodes.length;settings=main.clone();this.options=options;
+  private MultiInterchange(Node[] nodes,Settings[] main,Options options,double baseHeight,java.util.function.UnaryOperator<V> conformance){
+    this.conformance=conformance;anchors=nodes.clone();n=nodes.length;settings=main.clone();this.options=options;
     if(n!=5&&n!=6||main.length!=3)throw new IllegalArgumentException("五、六向立交需要 AB、CD、E 或 EF 三组端点");
     for(var s:settings){s.validate();if(!RoadProfile.catalog(s).twoWay()||s.style().ramp())throw new IllegalArgumentException("主路必须为双向普通道路或高速道路");}
     V a=nodes[0].position(),b=nodes[1].position(),c=nodes[2].position(),d=nodes[3].position();
@@ -87,10 +88,11 @@ public final class MultiInterchange {
     for(int i=0;i<n;i++)for(int j=i+1;j<n;j++)if(radial[i].dot(radial[j])>Math.cos(Math.toRadians(25)))throw new IllegalArgumentException("相邻方向夹角至少 25°");
   }
   public static Plan plan(Node[] nodes,Settings[] settings,Options options){return plan(nodes,settings,options,Arrays.stream(nodes).mapToDouble(v->v.position().y()).min().orElseThrow());}
-  public static Plan plan(Node[] nodes,Settings[] settings,Options options,double baseHeight){
+  public static Plan plan(Node[] nodes,Settings[] settings,Options options,double baseHeight){return plan(nodes,settings,options,baseHeight,null);}
+  public static Plan plan(Node[] nodes,Settings[] settings,Options options,double baseHeight,java.util.function.UnaryOperator<V> conformance){
     if(!InterchangePlanner.presets(nodes.length).contains(options.preset()))throw new IllegalArgumentException("请选择对应向数的全定向立交");
     IllegalArgumentException failure;Plan initial=null;
-    try{initial=new MultiInterchange(nodes,settings,options,baseHeight).build();if(!options.adjustEndpoints()||!options.allowShrink())return initial;failure=new IllegalArgumentException("收紧占地");}
+    try{initial=new MultiInterchange(nodes,settings,options,baseHeight,conformance).build();if(!options.adjustEndpoints()||!options.allowShrink())return initial;failure=new IllegalArgumentException("收紧占地");}
     catch(IllegalArgumentException e){failure=e;if(!options.adjustEndpoints())throw e;}
     V a=nodes[0].position(),u=nodes[1].position().sub(a).horizontalUnit(),b=nodes[2].position(),v=nodes[3].position().sub(b).horizontalUnit();
     double det=cross(u,v);if(Math.abs(det)<.4)throw failure;V center=a.add(u.mul(cross(b.sub(a),v)/det));
@@ -98,13 +100,13 @@ public final class MultiInterchange {
     double failed=options.allowShrink()?70:Math.max(70,shortest),radius=failed;Plan best=null;
     for(int attempt=0;attempt<17&&radius<1024;attempt++){
       radius=Math.min(1024,Math.ceil(Math.max(radius+24,radius*1.24)/4)*4);
-      try{best=new MultiInterchange(extend(nodes,center,radius,options.allowShrink()),settings,options,baseHeight).build();break;}
+      try{best=new MultiInterchange(extend(nodes,center,radius,options.allowShrink()),settings,options,baseHeight,conformance).build();break;}
       catch(IllegalArgumentException e){failed=radius;failure=e;}
     }
     if(best==null){if(initial!=null)return initial;throw new IllegalArgumentException("五/六向布局无法满足净空、坡度或半径："+failure.getMessage());}
     for(int k=0;k<6&&radius-failed>8;k++){
       double middle=Math.ceil((radius+failed)/8)*4;
-      try{Plan p=new MultiInterchange(extend(nodes,center,middle,options.allowShrink()),settings,options,baseHeight).build();best=p;radius=middle;}
+      try{Plan p=new MultiInterchange(extend(nodes,center,middle,options.allowShrink()),settings,options,baseHeight,conformance).build();best=p;radius=middle;}
       catch(IllegalArgumentException e){failed=middle;}
     }
     if(initial!=null&&extent(best)>=extent(initial)-.5)return initial;
@@ -112,9 +114,9 @@ public final class MultiInterchange {
     for(int index=0;index<nodes.length;index++){
       double low=nodes[index].position().sub(center).horizontalLength(),high=best.anchors().get(index).position().sub(center).horizontalLength();if(high<=low+1e-6)continue;
       Node[] candidate=best.anchors().toArray(Node[]::new);var current=candidate[index];V p=nodes[index].position();candidate[index]=new Node(new V(p.x(),current.position().y(),p.z()),current.yaw(),current.grade());
-      try{best=new MultiInterchange(candidate,settings,options,baseHeight).build();continue;}catch(IllegalArgumentException ignored){}
+      try{best=new MultiInterchange(candidate,settings,options,baseHeight,conformance).build();continue;}catch(IllegalArgumentException ignored){}
       for(int step=0;step<8&&high-low>1;step++){RoadPlanningBudget.check();double mid=(low+high)/2;candidate=best.anchors().toArray(Node[]::new);current=candidate[index];V at=center.add(p.sub(center).horizontalUnit().mul(mid));candidate[index]=new Node(new V(at.x(),current.position().y(),at.z()),current.yaw(),current.grade());
-        try{best=new MultiInterchange(candidate,settings,options,baseHeight).build();high=mid;}catch(IllegalArgumentException ignored){low=mid;}
+        try{best=new MultiInterchange(candidate,settings,options,baseHeight,conformance).build();high=mid;}catch(IllegalArgumentException ignored){low=mid;}
       }
     }return best;
   }
@@ -146,9 +148,10 @@ public final class MultiInterchange {
         double y=levels[axis];if(end<n){double blend=smooth((lengths[end]-r-4)/(lengths[end]*.13-4));y=anchors[end].position().y()+(levels[axis]-anchors[end].position().y())*blend;}
         samples.add(new Sample(new V(p.x(),y,p.z()),to.sub(from).horizontalUnit().left(),0,RoadTransitions.width(main,t*length,length)/2));
       }
-      Mesh mesh=RoadRibbon.mesh(samples,main);if(RoadGrades.maximum(mesh)>.15+1e-7)throw new IllegalArgumentException("主路升降段超过 15% 纵坡；请允许调整端点或延长主路");mains.add(mesh);legs.add(new Leg(axis==2&&n==5?"E 支路":"主路 "+(axis+1),first,second<n?second:first,mesh));
+      Mesh mesh=RoadRibbon.mesh(samples,main);if(conformance!=null)mesh=CurvedRoadPlans.map(mesh,conformance);if(RoadGrades.maximum(mesh)>.15+1e-7)throw new IllegalArgumentException("主路升降段超过 15% 纵坡；请允许调整端点或延长主路");mains.add(mesh);legs.add(new Leg(axis==2&&n==5?"E 支路":"主路 "+(axis+1),first,second<n?second:first,mesh));
     }
     for(int i=0;i<n;i++)for(int j=0;j<n;j++)if(i!=j&&i/2!=j/2)routes.add(route(i,j));
+    if(conformance!=null)for(int i=0;i<routes.size();i++){var r=routes.get(i);routes.set(i,new Route(r.from,r.to,CurvedRoadPlans.map(r.flat,conformance),r.sourceHeight,r.targetHeight));}
     var grids=mains.stream().map(Grid::new).toList();
     // Hold the grade at each actual common fork/merge; lift only after the decks separate.
     for(Route r:routes){

@@ -2,6 +2,7 @@ package com.sora.splineroads.core;
 
 import java.util.*;
 import java.util.function.BiPredicate;
+import java.util.function.Function;
 
 /** A changed road batch may split or merge UUIDs. A section is publishable only
  * after every member which contributes there has its complete replacement.
@@ -41,9 +42,19 @@ public final class RoadHandoffCohorts<K> {
     for(var group:touching){group.keys.remove(key);retire(group);}
     return true;
   }
-  public Set<K> keys(){Set<K> keys=new LinkedHashSet<>();for(var group:groups.values())keys.addAll(group.keys);return Set.copyOf(keys);}
+  private Set<Group<K>> distinctGroups(){var unique=Collections.newSetFromMap(new IdentityHashMap<Group<K>,Boolean>());unique.addAll(groups.values());return unique;}
+  public Set<K> keys(){Set<K> keys=new LinkedHashSet<>();for(var group:distinctGroups())keys.addAll(group.keys);return Set.copyOf(keys);}
   public Set<UUID> members(){return Set.copyOf(groups.keySet());}
-  public Set<UUID> members(K key){Set<UUID> ids=new HashSet<>();for(var group:groups.values())if(group.keys.contains(key))ids.addAll(group.members);return Set.copyOf(ids);}
+  public Set<UUID> members(K key){Set<UUID> ids=new HashSet<>();for(var group:distinctGroups())if(group.keys.contains(key))ids.addAll(group.members);return Set.copyOf(ids);}
+  /** Union each batch once and freeze each touched tile once. Prior snapshots
+   * remain immutable while overlapping retirements accumulate their coverage. */
+  public <S> void rememberCoverage(Map<K,Set<UUID>> coverage,Map<UUID,? extends Collection<S>> transitions,Function<S,K> keyOf){
+    Map<K,Set<UUID>> merged=new HashMap<>();
+    Function<K,Set<UUID>> seed=key->new HashSet<>(coverage.getOrDefault(key,Set.of()));
+    for(var group:distinctGroups())for(K key:group.keys)merged.computeIfAbsent(key,seed).addAll(group.members);
+    transitions.forEach((road,sections)->{for(S section:sections)merged.computeIfAbsent(keyOf.apply(section),seed).add(road);});
+    merged.forEach((key,ids)->coverage.put(key,Set.copyOf(ids)));
+  }
   public boolean contains(UUID member){return groups.containsKey(member);}
   public int size(){return new HashSet<>(groups.values()).size();}
   public void clear(){groups.clear();}

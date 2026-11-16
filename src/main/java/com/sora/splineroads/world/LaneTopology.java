@@ -145,7 +145,15 @@ public final class LaneTopology {
         &&a.mesh().samples().equals(b.mesh().samples());
   }
   private static boolean portsMatch(RoadRecord r,Map<UUID,RoadRecord> all){var l=metadata(r).link();try{var a=LaneRamps.host(all,l.from());V first=LaneRamps.port(a,point(a,l.from().point()),l.options().sourceExtra()?1:l.options().lanes()).position();V last=l.junctionMouth();if(l.to().road()!=null){last=LaneRamps.resolvedArrival(all,l,r.id()).position();}return LaneRampAlignment.axis(r.mesh(),true).distance(first)<1e-5&&LaneRampAlignment.axis(r.mesh(),false).distance(last)<1e-5;}catch(IllegalArgumentException e){return false;}}
-  static void reconcile(RoadData data,List<RoadIndex.Built> built,Set<UUID> removed){
+  static void reconcile(RoadData data,List<RoadIndex.Built> built,Set<UUID> removed){reconcile(data,built,removed,null);}
+  /** A late terrain pass compares ports with the previous planned pass, not the
+   * pre-edit save. Otherwise a changed link reroutes forever and drops the very
+   * structures whose contact requires the host reservation to be refreshed. */
+  static void reconcilePlanned(RoadData data,List<RoadIndex.Built> built,Set<UUID> removed){
+    var planned=records(data);removed.forEach(planned::remove);for(var b:built)planned.put(b.record.id(),b.record);
+    reconcile(data,built,removed,planned);
+  }
+  private static void reconcile(RoadData data,List<RoadIndex.Built> built,Set<UUID> removed,Map<UUID,RoadRecord> planned){
     RoadPlanningBudget.check();
     Map<UUID,RoadRecord> all=records(data);removed.forEach(all::remove);for(var b:built)all.put(b.record.id(),b.record);
     Set<UUID> scope=editScope(data,all,built,removed);
@@ -178,7 +186,7 @@ public final class LaneTopology {
     // A missing used automatic point is a normal-road closure, never a ramp unlock.
     for(var r:all.values()){var link=metadata(r).link();if(link==null||!scope.contains(r.id()))continue;for(var ref:List.of(link.from(),link.to()))if(ref.road()!=null){var host=all.get(ref.road());if(host==null)throw new IllegalArgumentException("道路仍被匝道引用，请确认级联删除依赖匝道");if(metadata(host).points().stream().noneMatch(p->p.id().equals(ref.point())))throw new IllegalArgumentException("该自动尽头车道点正在使用中，不能正常续接此端；或手动点仍有依赖匝道");}}
     LaneCrossSections.reconcile(all,scope);
-    Set<UUID> done=new HashSet<>(),visiting=new HashSet<>();for(var id:new ArrayList<>(all.keySet()))rebuild(data,id,all,done,visiting,scope);
+    Set<UUID> done=new HashSet<>(),visiting=new HashSet<>();for(var id:new ArrayList<>(all.keySet()))rebuild(data,id,all,done,visiting,scope,planned);
     LaneCrossSections.reconcile(all,scope);
     for(var r:new ArrayList<>(all.values()))if(independent(r)&&scope.contains(r.id()))all.put(r.id(),automatic(r,ends));
     assignPriorities(all);
@@ -296,7 +304,27 @@ public final class LaneTopology {
   private static boolean adjacentBefore(RoadData data,RoadRecord candidate,RoadRecord old){var b=data.index.roads.get(candidate.id());var r=b==null?candidate:b.record;return r.a().equals(old.a())||r.a().equals(old.b())||r.b().equals(old.a())||r.b().equals(old.b());}
   private static boolean sameGeometry(RoadData data,Map<UUID,RoadRecord> all,LanePoints.Ref ref){if(ref.road()==null)return true;var old=data.index.roads.get(ref.road());var now=all.get(ref.road());return old!=null&&now!=null&&old.record.rawMesh().samples().equals(now.rawMesh().samples());}
   private static boolean samePort(RoadData data,Map<UUID,RoadRecord> all,LanePoints.Ref ref){if(ref.road()==null)return true;var old=data.index.roads.get(ref.road());var now=all.get(ref.road());if(old==null||now==null||old.record.settings().style()!=now.settings().style())return false;try{return LaneRamps.port(old.record,point(old.record,ref.point())).equals(LaneRamps.port(now,point(now,ref.point())));}catch(IllegalArgumentException e){return false;}}
-  private static void rebuild(RoadData data,UUID id,Map<UUID,RoadRecord> all,Set<UUID> done,Set<UUID> visiting,Set<UUID> scope){if(done.contains(id)||!scope.contains(id))return;var r=all.get(id);if(r==null)throw new IllegalArgumentException("依赖道路已不存在："+id);var l=metadata(r).link();if(l==null){done.add(id);return;}if(!visiting.add(id))throw new IllegalArgumentException("匝道引用出现循环依赖");rebuild(data,l.from().road(),all,done,visiting,scope);if(l.to().road()!=null)rebuild(data,l.to().road(),all,done,visiting,scope);
+  private static boolean samePreparedPort(Map<UUID,RoadRecord> before,Map<UUID,RoadRecord> after,LanePoints.Ref ref){
+    if(ref.road()==null)return true;var a=before.get(ref.road());var b=after.get(ref.road());
+    if(a==null||b==null||a.settings().style()!=b.settings().style())return false;
+    try{return LaneRamps.port(a,point(a,ref.point())).equals(LaneRamps.port(b,point(b,ref.point())));}catch(IllegalArgumentException e){return false;}
+  }
+  private static boolean samePreparedGeometry(Map<UUID,RoadRecord> before,Map<UUID,RoadRecord> after,LanePoints.Ref ref){
+    if(ref.road()==null)return true;var a=before.get(ref.road());var b=after.get(ref.road());return a!=null&&b!=null&&a.rawMesh().samples().equals(b.rawMesh().samples());
+  }
+  private static void rebuild(RoadData data,UUID id,Map<UUID,RoadRecord> all,Set<UUID> done,Set<UUID> visiting,Set<UUID> scope,Map<UUID,RoadRecord> planned){if(done.contains(id)||!scope.contains(id))return;var r=all.get(id);if(r==null)throw new IllegalArgumentException("依赖道路已不存在："+id);var l=metadata(r).link();if(l==null){done.add(id);return;}if(!visiting.add(id))throw new IllegalArgumentException("匝道引用出现循环依赖");rebuild(data,l.from().road(),all,done,visiting,scope,planned);if(l.to().road()!=null)rebuild(data,l.to().road(),all,done,visiting,scope,planned);
+    var prepared=planned==null?null:planned.get(id);
+    if(prepared!=null&&sameDeck(r,prepared)&&Objects.equals(l,metadata(prepared).link())&&portsMatch(r,all)
+        &&samePreparedPort(planned,all,l.from())&&samePreparedPort(planned,all,l.to())
+        &&(!l.options().sourceExtra()||samePreparedGeometry(planned,all,l.from()))
+        &&(!(l.options().targetExtra()||l.targetOffset()!=0)||samePreparedGeometry(planned,all,l.to()))){
+      try{
+        LaneRamps.validate(r.mesh(),all,id,l);RoadCycleChain.checkRamp(all,id,r.mesh());
+        for(var road:all.values())for(var cut:metadata(road).cuts())if(cut.connection().equals(id)&&!cut.arrival()&&cut.temporary())LaneReopening.validateRestored(road.mesh(),cut.lane(),r.mesh(),id);
+        visiting.remove(id);done.add(id);return;
+      }
+      catch(IllegalArgumentException changedClearance){/* Refit against final host terrain below. */}
+    }
     var existing=data.index.roads.get(id);
     if(existing!=null&&sameDeck(r,existing.record)&&Objects.equals(l,metadata(existing.record).link())
         &&samePort(data,all,l.from())&&samePort(data,all,l.to())

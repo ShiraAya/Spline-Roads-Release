@@ -3,13 +3,55 @@ import com.sora.splineroads.core.RoadGeometry.V;
 
 /** Light is sampled in front of a visible face, never from an opaque lining cell behind it. */
 public final class RoadLighting {
-  public interface Access { boolean opaque(int x,int y,int z); int packed(int x,int y,int z); }
+  private static final int FULL_BRIGHT=0x00F000F0;
+  private static final double[] INSETS={.2,.7,1.2}, OUTWARD={.12,.65,1.15}, SIDEWAYS={.35,.75,1.25};
+  public interface Access {
+    boolean opaque(int x,int y,int z);
+    int packed(int x,int y,int z);
+    default int surface(V vertex,V normal,double reach){return surfaceLight(vertex,normal,this,reach);}
+  }
+  /** Only shared seam samples, scoped to one stable render-thread packing step.
+   * Clear before world/light updates can run. Negative results still use each
+   * face's own centroid fallback; no world or access object is retained. */
+  public static final class SurfaceCache {
+    private record Key(V vertex,V normal,double reach){}
+    /** Horizontal faces with the same ordered voxel footprint perform exactly
+     * the same opacity/light reads, even when their vertices differ slightly. */
+    private record FlatKey(int x0,int x1,int x2,int y0,int y1,int y2,int z0,int z1,int z2){}
+    private final java.util.Map<Key,Integer> values=new java.util.HashMap<>();
+    private final java.util.Map<FlatKey,Integer> flatValues=new java.util.HashMap<>();
+    private long hits,misses;
+    public int sample(V vertex,V normal,double reach,Access access){
+      if(normal.x()==0&&normal.z()==0&&Math.abs(normal.y())==1){
+        double x=vertex.x(),y=vertex.y(),z=vertex.z(),ny=normal.y();
+        var key=new FlatKey((int)Math.floor(x-reach),(int)Math.floor(x),(int)Math.floor(x+reach),
+            (int)Math.floor(y+ny*.12),(int)Math.floor(y+ny*.65),(int)Math.floor(y+ny*1.15),
+            (int)Math.floor(z+ny*reach),(int)Math.floor(z),(int)Math.floor(z-ny*reach));
+        var saved=flatValues.get(key);if(saved!=null){hits++;return saved;}
+        misses++;int result=surfaceLight(vertex,normal,access,reach);
+        if(values.size()+flatValues.size()>=4096)clear();flatValues.put(key,result);return result;
+      }
+      var key=new Key(vertex,normal,reach);
+      var saved=values.get(key);
+      if(saved!=null){hits++;return saved;}
+      misses++;
+      int result=surfaceLight(vertex,normal,access,reach);
+      if(values.size()+flatValues.size()>=4096)clear();
+      values.put(key,result);return result;
+    }
+    public void clear(){values.clear();flatValues.clear();}
+    public long hits(){return hits;}
+    public long misses(){return misses;}
+  }
   public static V normal(RoadSurface.Face f){
     V origin=f.points().get(0);
     for(int i=1;i+1<f.points().size();i++){
-      V a=f.points().get(i).sub(origin),b=f.points().get(i+1).sub(origin);
-      V n=new V(a.y()*b.z()-a.z()*b.y(),a.z()*b.x()-a.x()*b.z(),a.x()*b.y()-a.y()*b.x());
-      double length=Math.sqrt(n.dot(n));if(length>1e-10)return n.mul(1/length);
+      V a=f.points().get(i),b=f.points().get(i+1);
+      double ax=a.x()-origin.x(),ay=a.y()-origin.y(),az=a.z()-origin.z();
+      double bx=b.x()-origin.x(),by=b.y()-origin.y(),bz=b.z()-origin.z();
+      double nx=ay*bz-az*by,ny=az*bx-ax*bz,nz=ax*by-ay*bx;
+      double length=Math.sqrt(nx*nx+ny*ny+nz*nz);
+      if(length>1e-10){double scale=1/length;return new V(nx*scale,ny*scale,nz*scale);}
     }
     return new V(0,1,0);
   }
@@ -17,27 +59,39 @@ public final class RoadLighting {
     return sample(face,vertex,access,false);
   }
   public static int sample(RoadSurface.Face face,V vertex,Access access,boolean forceUp){
-    if(face.emissive())return 15728880;
-    V n=normal(face),center=new V(0,0,0);
+    if(face.emissive())return FULL_BRIGHT;
+    V n=normal(face);
     if(forceUp&&n.y()<0)n=n.mul(-1);
+    return sample(face,vertex,access,n,center(face));
+  }
+  public static V center(RoadSurface.Face face){
+    double x=0,y=0,z=0;
+    for(V v:face.points()){x+=v.x();y+=v.y();z+=v.z();}
+    double scale=1.0/face.points().size();return new V(x*scale,y*scale,z*scale);
+  }
+  public static int sample(RoadSurface.Face face,V vertex,Access access,V n,V center){
+    if(face.emissive())return FULL_BRIGHT;
     // Concrete is a connected surface. Sampling toward each individual
     // triangle's centroid gives the SAME seam vertex different light values.
     boolean walk=face.texture().name().startsWith("WALK_");
-    if(face.texture()==RoadSurface.Texture.CONCRETE||walk){int stable=surfaceLight(vertex,n,access,walk?1.05:.65);if(stable>=0)return stable;}
-    for(V v:face.points())center=center.add(v);
-    center=center.mul(1.0/face.points().size());
-    V inward=center.sub(vertex);double length=Math.sqrt(inward.dot(inward));
-    V direction=length<1e-8?new V(0,0,0):inward.mul(1/length);
+    if(face.texture()==RoadSurface.Texture.CONCRETE||walk){int stable=access.surface(vertex,n,walk?1.05:.65);if(stable>=0)return stable;}
+    double ix=center.x()-vertex.x(),iy=center.y()-vertex.y(),iz=center.z()-vertex.z();
+    double length=Math.sqrt(ix*ix+iy*iy+iz*iz),scale=length<1e-8?0:1/length;
+    double dx=length<1e-8?0:ix*scale,dy=length<1e-8?0:iy*scale,dz=length<1e-8?0:iz*scale;
     // The lining is up to one world cell thick; larger offsets only serve opaque-cell fallbacks.
     int nearby=-1;
-    for(double inset:new double[]{.2,.7,1.2}){
+    for(double inset:INSETS){
       boolean visible=false;
-      for(double outward:new double[]{.12,.65,1.15}){
-        V p=vertex.add(direction.mul(Math.min(inset,length))).add(n.mul(outward));
-        int x=(int)Math.floor(p.x()),y=(int)Math.floor(p.y()),z=(int)Math.floor(p.z());
+      double amount=Math.min(inset,length);
+      double px=vertex.x()+dx*amount,py=vertex.y()+dy*amount,pz=vertex.z()+dz*amount;
+      for(double outward:OUTWARD){
+        int x=(int)Math.floor(px+n.x()*outward),y=(int)Math.floor(py+n.y()*outward),z=(int)Math.floor(pz+n.z()*outward);
         if(access.opaque(x,y,z)){if(visible)break;continue;}
         visible=true;int light=access.packed(x,y,z);
         nearby=nearby<0?light:merge(nearby,light);
+        // Vanilla sky and block light are each at their maximum. The
+        // contributing samples and intervening opacity have been recorded.
+        if(nearby==FULL_BRIGHT)return nearby;
       }
     }
     // The first transparent collider cell can still carry zero light. Use the
@@ -46,35 +100,44 @@ public final class RoadLighting {
     if(nearby>=0)return nearby;
     // Long, narrow pavement triangles can keep their corner inside a wall voxel even
     // after a one-block diagonal inset. Their centroid is safely on the same visible face.
-    for(double outward:new double[]{.12,.65,1.15}){
-      V point=center.add(n.mul(outward));int x=(int)Math.floor(point.x()),y=(int)Math.floor(point.y()),z=(int)Math.floor(point.z());
+    for(double outward:OUTWARD){
+      int x=(int)Math.floor(center.x()+n.x()*outward),y=(int)Math.floor(center.y()+n.y()*outward),z=(int)Math.floor(center.z()+n.z()*outward);
       if(!access.opaque(x,y,z))return access.packed(x,y,z);
     }
     // A narrow edge stripe can remain in the same partially occupied wall voxel
     // along its entire length. Look sideways above an upward-facing surface;
     // never sample below the deck or through an opaque wall face.
-    if(n.y()>.7)for(double reach:new double[]{.35,.75,1.25}){
+    if(n.y()>.7)for(double reach:SIDEWAYS){
       int best=-1;
-      for(int dx=-1;dx<=1;dx++)for(int dz=-1;dz<=1;dz++)if(dx!=0||dz!=0){
-        V q=vertex.add(n.mul(.2)).add(new V(dx*reach,0,dz*reach));
-        int x=(int)Math.floor(q.x()),y=(int)Math.floor(q.y()),z=(int)Math.floor(q.z());
-        if(!access.opaque(x,y,z)){int light=access.packed(x,y,z);best=best<0?light:Math.max(best&0xffff,light&0xffff)|(Math.max(best>>>16,light>>>16)<<16);}
+      for(int sx=-1;sx<=1;sx++)for(int sz=-1;sz<=1;sz++)if(sx!=0||sz!=0){
+        int x=(int)Math.floor((vertex.x()+n.x()*.2)+sx*reach),y=(int)Math.floor((vertex.y()+n.y()*.2)+0.0),z=(int)Math.floor((vertex.z()+n.z()*.2)+sz*reach);
+        if(!access.opaque(x,y,z)){
+          int light=access.packed(x,y,z);best=best<0?light:merge(best,light);
+          if(best==FULL_BRIGHT)return best;
+        }
       }
       if(best>=0)return best;
     }
-    V p=vertex.add(n.mul(.12));return access.packed((int)Math.floor(p.x()),(int)Math.floor(p.y()),(int)Math.floor(p.z()));
+    return access.packed((int)Math.floor(vertex.x()+n.x()*.12),(int)Math.floor(vertex.y()+n.y()*.12),(int)Math.floor(vertex.z()+n.z()*.12));
   }
   private static int surfaceLight(V vertex,V n,Access access,double reach){
-    V tangent=Math.abs(n.y())>.9?new V(1,0,0):new V(n.z(),0,-n.x()).horizontalUnit();
-    V across=new V(n.y()*tangent.z()-n.z()*tangent.y(),n.z()*tangent.x()-n.x()*tangent.z(),n.x()*tangent.y()-n.y()*tangent.x());
+    double tx=1,tz=0;
+    if(Math.abs(n.y())<=.9){
+      double length=Math.hypot(n.z(),-n.x());
+      if(length<1e-8)throw new IllegalArgumentException("道路出现零长度或折返切线");
+      tx=n.z()/length;tz=-n.x()/length;
+    }
+    double ax=n.y()*tz-n.z()*0.0,ay=n.z()*tx-n.x()*tz,az=n.x()*0.0-n.y()*tx;
     int best=-1;
-    for(double a:new double[]{-reach,0,reach})for(double b:new double[]{-reach,0,reach}){
+    for(int i=-1;i<=1;i++)for(int j=-1;j<=1;j++){
+      double a=i*reach,b=j*reach;
       boolean visible=false;
-      for(double outward:new double[]{.12,.65,1.15}){
-        V p=vertex.add(tangent.mul(a)).add(across.mul(b)).add(n.mul(outward));
-        int x=(int)Math.floor(p.x()),y=(int)Math.floor(p.y()),z=(int)Math.floor(p.z());
+      double px=(vertex.x()+tx*a)+ax*b,py=(vertex.y()+0.0*a)+ay*b,pz=(vertex.z()+tz*a)+az*b;
+      for(double outward:OUTWARD){
+        int x=(int)Math.floor(px+n.x()*outward),y=(int)Math.floor(py+n.y()*outward),z=(int)Math.floor(pz+n.z()*outward);
         if(access.opaque(x,y,z)){if(visible)break;continue;}
         visible=true;int light=access.packed(x,y,z);best=best<0?light:merge(best,light);
+        if(best==FULL_BRIGHT)return best;
       }
     }
     return best;

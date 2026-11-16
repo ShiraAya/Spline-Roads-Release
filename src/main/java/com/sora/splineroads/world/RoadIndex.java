@@ -3,17 +3,60 @@ package com.sora.splineroads.world;
 import com.sora.splineroads.core.*;
 import com.sora.splineroads.core.RoadGeometry.*;
 import java.util.*;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.phys.shapes.*;
 
 public final class RoadIndex {
-  private static <K, V> Map<K, V> bounded(int limit) {
-    return new LinkedHashMap<>(128, .75f, true) {
-      protected boolean removeEldestEntry(Map.Entry<K, V> entry) {
-        return size() > limit;
+  // Only immutable geometry addresses, never blocks, permissions or ownership.
+  // 8 million longs cap the retained payload at 64 MB across every world.
+  private static final WeakIdentityCache<Built,long[]> EDIT_FOOTPRINTS=
+      new WeakIdentityCache<>(1024,8_000_000,keys->keys.length);
+  static void clearEditFootprints(){EDIT_FOOTPRINTS.clear();}
+  /** Generated seams are bookkeeping, while external/independent road ends stay visible. */
+  private final Map<Long,Boolean> internalNodes=new HashMap<>();
+  public synchronized boolean internalInterchangeNode(BlockPos pos){return internalNodes.computeIfAbsent(pos.asLong(),key->internalInterchangeEnd(pos));}
+  private boolean internalInterchangeEnd(BlockPos pos){
+    var members=atNode(pos);if(members.isEmpty())return false;
+    UUID group=null;
+    for(var id:members){
+      var built=roads.get(id);if(built==null)return false;var r=built.record;
+      if(r.assembly()==null||r.junction()!=null||r.toll()!=null)return false;
+      if(group==null)group=r.assembly();else if(!group.equals(r.assembly()))return false;
+    }
+    if(members.size()>1)return true;
+    var own=roads.get(members.iterator().next());
+    var point=own.record.a().equals(pos)?own.mesh.first().center():own.mesh.last().center();
+    for(var other:roads.values())if(!members.contains(other.record.id())&&group.equals(other.record.assembly())){
+      for(var end:List.of(other.mesh.first(),other.mesh.last())){
+        var delta=end.center().sub(point);var edge=own.record.a().equals(pos)?own.mesh.first():own.mesh.last();
+        if(Math.abs(delta.y())<.2&&Math.abs(delta.dot(edge.left().left()))<.5
+            &&Math.abs(delta.dot(edge.left()))<edge.halfWidth()+.2&&Math.abs(end.left().dot(edge.left()))>.9)return true;
       }
-    };
+      var q=RoadQueries.project(other.mesh,point);var s=q.sample();
+      if(s.distance()>1&&s.distance()<other.mesh.length()-1&&Math.abs(s.center().y()-point.y())<.2
+          &&q.horizontalDistance()<s.halfWidth()+.2)return true;
+    }
+    return false;
+  }
+  /** Packed block positions have correlated Long hashes. Mix primitive keys
+   * while preserving the existing access order, null entries and strict limit. */
+  static final class LongLru<V> extends AbstractMap<Long,V> {
+    private final int limit;
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap<V> entries=new it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap<>(128);
+    LongLru(int limit){this.limit=limit;}
+    public V get(long key){return entries.getAndMoveToLast(key);}
+    public boolean containsKey(long key){return entries.containsKey(key);}
+    public V put(long key,V value){var old=entries.putAndMoveToLast(key,value);if(entries.size()>limit)entries.removeFirst();return old;}
+    public V computeIfAbsent(long key,java.util.function.LongFunction<? extends V> factory){var old=entries.get(key);if(old!=null)return get(key);var value=factory.apply(key);if(value!=null)put(key,value);return value;}
+    @Override public V get(Object key){return key instanceof Long value?get(value.longValue()):null;}
+    @Override public boolean containsKey(Object key){return key instanceof Long value&&containsKey(value.longValue());}
+    @Override public V put(Long key,V value){return put(key.longValue(),value);}
+    @Override public int size(){return entries.size();}
+    @Override public void clear(){entries.clear();}
+    @Override public Set<Map.Entry<Long,V>> entrySet(){return entries.entrySet();}
   }
 
   public static final class Built {
@@ -21,16 +64,17 @@ public final class RoadIndex {
 
     public final RoadRecord record;
     public final Mesh mesh;
+    public final List<RoadStructures.Part> gantryFrames;
     public final Map<Long, List<RoadRaster.Box>> cells;
-    public final Set<Long> chunks = new HashSet<>();
-    public final Set<Long> lightCells = new HashSet<>();
-    public final Map<Long,Double> walkTops=new HashMap<>();
-    public final Set<Long> shellCells = new HashSet<>();
+    public final Set<Long> chunks = new LongOpenHashSet();
+    public final Set<Long> lightCells = new LongOpenHashSet();
+    public final Map<Long,Double> walkTops=new Long2ObjectOpenHashMap<>();
+    public final Set<Long> shellCells = new LongOpenHashSet();
     public final Map<Long, Column> columns;
-    private Map<Long,Column> columnData=new HashMap<>();
-    private Map<Long,List<RoadRaster.Box>> cellData=new HashMap<>();
-    private final Map<Long,List<RoadRaster.Box>> nearbyCells=bounded(1024);
-    private final Map<Long,Column> nearbyColumns=bounded(1024);
+    private Long2ObjectOpenHashMap<Column> columnData=new Long2ObjectOpenHashMap<>();
+    private Long2ObjectOpenHashMap<List<RoadRaster.Box>> cellData=new Long2ObjectOpenHashMap<>();
+    private final LongLru<List<RoadRaster.Box>> nearbyCells=new LongLru<>(1024);
+    private final LongLru<Column> nearbyColumns=new LongLru<>(1024);
     private final boolean deferred;
     private volatile boolean rasterized;
     // Compute clearance lazily from per-column ranges instead of retaining millions of boxed keys.
@@ -83,13 +127,13 @@ public final class RoadIndex {
       return (int) Math.floor(floor + 1e-7);
     }
 
-    private final Map<Long,Column> nearbyClearance=bounded(1024);
+    private final LongLru<Column> nearbyClearance=new LongLru<>(1024);
     private Map<Long,Column> dryColumns;
     private Map<Long,Column> clearanceColumns(){
       ensureRaster();
       if(record.settings().structure()!=Structure.TUNNEL){
         if(dryColumns==null){
-          dryColumns=new HashMap<>(columnData);
+          dryColumns=new Long2ObjectOpenHashMap<>(columnData);
           for(var e:walkTops.entrySet()){
             var p=BlockPos.of(e.getKey());long key=BlockPos.asLong(p.getX(),0,p.getZ());double y=e.getValue();
             dryColumns.merge(key,new Column(y,y),(a,b)->new Column(Math.min(a.minTop(),b.minTop()),Math.max(a.maxTop(),b.maxTop())));
@@ -142,13 +186,13 @@ public final class RoadIndex {
       for(var tube:automaticTubes())if(RoadTunnelSpace.intersects(tube,p.getX(),p.getY(),p.getZ(),1))return true;
       return false;
     }
-    private final Map<Long,Integer> tunnelEnds=bounded(2048);
+    private final LongLru<Integer> tunnelEnds=new LongLru<>(2048);
     private synchronized int clearEnd(Column c,long key) {
       if(record.settings().structure()==Structure.TUNNEL) {
         var previous=tunnelEnds.get(key);if(previous!=null)return previous;
         var p=BlockPos.of(key);
         int result=(int)Math.ceil(RoadInfrastructure.excavationTop(mesh,p.getX(),p.getZ(),c.maxTop())-1e-7);
-        tunnelEnds.put(key,result);return result;
+        tunnelEnds.put(key,Integer.valueOf(result));return result;
       }
       var p=BlockPos.of(key);
       double cycle=RoadsideBypass.ceiling(mesh,p.getX()+.5,p.getZ()+.5,c.maxTop());
@@ -182,7 +226,7 @@ public final class RoadIndex {
     private final boolean lazy;
     private volatile RoadRaster.Local local;
     private volatile Mesh rendered;
-    private Map<Long, List<RoadRaster.Box>> deckCells = new HashMap<>();
+    private Long2ObjectOpenHashMap<List<RoadRaster.Box>> deckCells = new Long2ObjectOpenHashMap<>();
 
     public Built(RoadRecord record) {
       this(record, false);
@@ -229,6 +273,7 @@ public final class RoadIndex {
       // Derived raised medians also change the holes used by the collision raster.
       if (reuse != null && !record.settings().equals(reuse.record.settings())) reuse = null;
       this.record = record;
+      gantryFrames = record.structures().stream().filter(p -> p.material()==RoadStructures.Material.GANTRY_FRAME).toList();
       signalHeads = record.structures().stream().filter(RoadSignals::signal).toList();
       net.minecraft.world.phys.AABB signalBox = null;
       for (var head : signalHeads) {
@@ -264,10 +309,28 @@ public final class RoadIndex {
       buildRaster(reuse!=null&&reuse.rasterized);
     }
     private synchronized void ensureRaster(){RoadEditRasters.used(this);if(!rasterized)buildRaster(false);}
+    /** Old roads only contribute the addresses to examine. Keep a compact,
+     * bounded footprint when the new road's full raster is already available;
+     * subsequent edits need not regenerate all its individual collision boxes. */
+    synchronized void addEditFootprint(Set<Long> target){
+      if(lazy)throw new IllegalStateException("Edit footprints require a server road");
+      long[] keys=EDIT_FOOTPRINTS.get(this,road->{
+        ensureRaster();
+        var result=new it.unimi.dsi.fastutil.longs.LongArrayList(cellData.size());
+        for(long key:cellData.keySet())result.add(key);
+        if(effectiveClearance()!=0)for(var entry:clearanceColumns().entrySet()){
+          RoadPlanningBudget.check();long key=entry.getKey();int x=BlockPos.getX(key),z=BlockPos.getZ(key);
+          int from=clearMin(entry.getValue(),key),to=clearEnd(entry.getValue(),key);
+          for(int y=from;y<to;y++)result.add(BlockPos.asLong(x,y,z));
+        }
+        return result.toLongArray();
+      });
+      for(long key:keys)target.add(key);
+    }
     /** Full edit rasters are temporary. Movement uses the small local collision index. */
     public synchronized void releaseEditRaster() {
       if (lazy || !rasterized&&cellData.isEmpty()&&columnData.isEmpty()&&deckCells.isEmpty()) return;
-      cellData = new HashMap<>(); deckCells = new HashMap<>(); columnData = new HashMap<>(); nearbyCells.clear();
+      cellData = new Long2ObjectOpenHashMap<>(); deckCells = new Long2ObjectOpenHashMap<>(); columnData = new Long2ObjectOpenHashMap<>(); nearbyCells.clear();
       rasterized = false; dryColumns=null;walkTops.clear();nearbyClearance.clear();
     }
     private void buildRaster(boolean reused){
@@ -336,7 +399,7 @@ public final class RoadIndex {
     public double walkTopAt(BlockPos p) {
       if(rasterized)return walkTops.getOrDefault(p.asLong(),Double.NEGATIVE_INFINITY);
       var cell=new RoadRaster.Cell(p.getX(),p.getY(),p.getZ());
-      var column=prepareCollision().structureColumn(p.getX(),p.getZ(),a->RoadsideBypass.walkway(a));
+      var column=prepareCollision().structureColumn(p.getX(),p.getZ(),p.getY(),p.getY()+1,a->RoadsideBypass.walkway(a));
       return column.getOrDefault(cell,List.of()).stream().mapToDouble(b->p.getY()+b.y1()).max().orElse(Double.NEGATIVE_INFINITY);
     }
 
@@ -345,6 +408,18 @@ public final class RoadIndex {
     }
     public boolean shellAt(BlockPos p) {
       return rasterized?shellCells.contains(p.asLong()):prepareCollision().structureAt(new RoadRaster.Cell(p.getX(),p.getY(),p.getZ()),part->part.material()==RoadStructures.Material.TUNNEL);
+    }
+
+    public boolean junctionTriangle(){
+      var ref=record.junction();
+      return ref!=null&&ref.triangleWalls()>=0&&mesh.samples().size()==2&&mesh.first().halfWidth()<1e-8;
+    }
+
+    public boolean sameJunctionTriangles(Built other){
+      return junctionTriangle()&&other.junctionTriangle()&&record.assembly()!=null
+          &&record.assembly().equals(other.record.assembly())
+          &&record.junction().geometryVersion()==other.record.junction().geometryVersion()
+          &&record.junction().spec().equals(other.record.junction().spec());
     }
 
     public Mesh renderMesh() {
@@ -432,6 +507,7 @@ public final class RoadIndex {
 
   public java.util.function.Consumer<UUID> changed = id -> {};
   public synchronized void put(Built built) {
+    internalNodes.clear();
     changed.accept(built.record.id());
     remove(built.record.id());
     revision++;contentRevision++;
@@ -458,6 +534,7 @@ public final class RoadIndex {
   }
 
   public synchronized Built remove(UUID id) {
+    internalNodes.clear();
     Built old = roads.remove(id);
     if(old!=null&&pointIndex!=null)pointIndex.remove(id);
     if(old!=null&&!lazy)planningSnapshot=planningSnapshot.without(id);
@@ -572,6 +649,7 @@ public final class RoadIndex {
   }
 
   public synchronized void clear() {
+    internalNodes.clear();
     revision++;contentRevision++;
     roads.clear();
     if(pointIndex!=null)pointIndex.clear();

@@ -1,0 +1,14 @@
+package com.sora.splineroads.world;
+import com.sora.splineroads.core.*;import com.sora.splineroads.core.RoadGeometry.*;import com.sora.splineroads.core.InterchangePlanner.*;
+import net.minecraft.nbt.*;import net.minecraft.core.BlockPos;import java.util.*;import java.util.concurrent.atomic.*;import java.util.function.*;import java.lang.reflect.*;
+public final class Refinement202Validation {
+ static void ok(boolean v,String m){if(!v)throw new AssertionError(m);}
+ public static void main(String[]args)throws Exception{
+  var s=new Settings(Mode.STRAIGHT,Style.H4_RAIL,28,1,.35,90);var nodes=new Node[]{new Node(new V(-400,0,0),-90,0),new Node(new V(400,0,0),-90,0),new Node(new V(0,12,-400),0,0),new Node(new V(0,12,400),0,0)};var options=Options.DEFAULT.adjust(false);var best=InterchangePlanner.plan(nodes,s,s,options);var t=new CompoundTag();var sources=new ListTag();var ns=new ListTag();for(var n:nodes)ns.add(RoadRecord.writeNode(n));for(int i=0;i<4;i+=2){var n=nodes[i];var m=nodes[i+1];var r=new RoadRecord(UUID.randomUUID(),new UUID(0,0),BlockPos.containing(n.position().x(),0,n.position().z()),BlockPos.containing(m.position().x(),0,m.position().z()),n,m,s,false,4);var q=new CompoundTag();q.putInt("Axis",i/2);q.put("Road",r.header());sources.add(q);}t.put("ContinuousSources",sources);t.put("Nodes",ns);t.put("Options",Interchanges.write(options));
+  var method=ContinuousFit.class.getDeclaredMethod("tighten",CompoundTag.class,Function.class,Plan.class,Node[].class,V.class,double.class,Options.class);method.setAccessible(true);Function<CompoundTag,Plan> expensive=q->{for(;;)RoadPlanningBudget.check();};
+  Object result=method.invoke(null,t,expensive,best,nodes,new V(0,0,0),32d,options);ok(result==best,"optional timeout lost validated incumbent");
+  boolean expired=false;try(var outer=RoadPlanningBudget.open("outer",.05)){try{method.invoke(null,t,expensive,best,nodes,new V(0,0,0),32d,options);}catch(InvocationTargetException e){expired=e.getCause() instanceof RoadPlanningBudget.Expired;}}ok(expired,"outer deadline swallowed");
+  var cancel=new AtomicBoolean();boolean cancelled=false;Function<CompoundTag,Plan> cancelling=q->{cancel.set(true);RoadPlanningBudget.check();return best;};try(var outer=RoadPlanningBudget.cancellable("cancel",cancel::get)){try{method.invoke(null,t,cancelling,best,nodes,new V(0,0,0),32d,options);}catch(InvocationTargetException e){cancelled=e.getCause() instanceof RoadPlanningBudget.Aborted&&!(e.getCause() instanceof RoadPlanningBudget.Expired);}}ok(cancelled,"user cancellation swallowed");
+  boolean rejected=false;try{ContinuousFit.plan(t,q->{throw new IllegalArgumentException("no feasible geometry");});}catch(IllegalArgumentException e){rejected=e.getMessage().equals("no feasible geometry");}ok(rejected,"no feasible geometry returned success");RoadPlanningBudget.check();System.out.println("REFINEMENT202 PASS valid-incumbent/outer-deadline/cancel/no-solution checks=4");
+ }
+}

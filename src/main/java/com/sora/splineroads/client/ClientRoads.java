@@ -99,15 +99,18 @@ public final class ClientRoads {
   private static final Set<Long> residencyChunks=new LinkedHashSet<>();
   private static final Set<UUID> residencyRoads=new LinkedHashSet<>();
   private static final RoadColdSync coldSync=new RoadColdSync();
+  private static final int MAX_COLD_ROADS=2048;
   private static final LinkedHashMap<UUID,Long> cold=new LinkedHashMap<>();
   private static long coldBytes,coldDerivedBytes,coldHits,pruned,derivedEvictions,coldSyncRequests,coldSyncAcks;
   private static Map<UUID,Long> coldWeights=Map.of();
-  private static final Set<UUID> coldGpuTrimmed=new HashSet<>();
   private static int coldCursor;
   private static long coldRevision=-1,activityRevision,accountingPasses,trimVisits,trimNanos;
   private static void coldChanged(){coldRevision=-1;activityRevision++;}
-  private static void resetCold(){cold.clear();coldWeights=Map.of();coldGpuTrimmed.clear();coldCursor=0;coldBytes=coldDerivedBytes=0;residencyChunks.clear();residencyRoads.clear();coldSync.clear();coldChanged();}
-  static void chunkChanged(long chunk){residencyChunks.add(chunk);RoadRenderer.chunkChanged(chunk);}
+  private static void resetCold(){cold.clear();coldWeights=Map.of();coldCursor=0;coldBytes=coldDerivedBytes=0;residencyChunks.clear();residencyRoads.clear();coldSync.clear();coldChanged();}
+  static void chunkChanged(long chunk){
+    if(!INDEX.inChunk(chunk).isEmpty()||coldSync.mayHaveEvicted(chunk))residencyChunks.add(chunk);
+    RoadRenderer.chunkChanged(chunk);
+  }
   private static boolean chunkLoaded(net.minecraft.client.multiplayer.ClientLevel level,long chunk){
     return level.getChunkSource().getChunk((int)chunk,(int)(chunk>>32),net.minecraft.world.level.chunk.ChunkStatus.FULL,false)!=null;
   }
@@ -118,7 +121,7 @@ public final class ClientRoads {
   static boolean active(UUID id){return INDEX.roads.containsKey(id)&&!cold.containsKey(id);}
   static long visibilityRevision(){return INDEX.contentRevision()+activityRevision;}
   static String cacheMetrics(){return "cold roads="+cold.size()+" sourceMiB="+(coldBytes/1048576)+" renderMiB="+(coldDerivedBytes/1048576)+" renderEvicted="+derivedEvictions+" hits="+coldHits+" evicted="+pruned+" accounting="+accountingPasses+" trimVisits="+trimVisits+" trimMs="+(trimNanos/1000000)+" coldSync="+coldSync.pending()+" "+inbox.metrics();}
-  private static void awaken(UUID id){var weight=cold.remove(id);if(weight!=null){coldChanged();coldGpuTrimmed.remove(id);coldBytes-=weight;coldHits++;TollNameRenderer.clear();RoadRenderer.resume(id);}}
+  private static void awaken(UUID id){var weight=cold.remove(id);if(weight!=null){coldChanged();coldBytes-=weight;coldHits++;TollNameRenderer.clear();RoadRenderer.resume(id);}}
   private static void cool(UUID id,RoadIndex.Built road){
     if(cold.containsKey(id))return;
     long weight=4096L+road.mesh.samples().size()*384L+road.record.structures().size()*512L;
@@ -127,6 +130,7 @@ public final class ClientRoads {
   private static void trimCold(){
     if(cold.isEmpty()){coldDerivedBytes=0;coldWeights=Map.of();coldRevision=RoadRenderer.retentionRevision();return;}
     long started=System.nanoTime(),limit=com.sora.splineroads.config.RoadClientConfig.COLD_ROAD_CACHE_MIB.get()*1048576L;
+    long meshLimit=com.sora.splineroads.config.RoadClientConfig.COLD_MESH_CACHE_MIB.get()*1048576L;
     long observed=RoadRenderer.retentionRevision();
     if(coldRevision!=observed){
       coldWeights=RoadRenderer.retainedRoadBytes(cold.keySet());coldDerivedBytes=0;for(long weight:coldWeights.values())coldDerivedBytes+=weight;
@@ -134,13 +138,13 @@ public final class ClientRoads {
       // reconcile it; do not stamp a mixed snapshot with the newer generation.
       coldRevision=observed;accountingPasses++;
     }
-    if(coldBytes+coldDerivedBytes<=limit&&cold.size()<=512){trimNanos+=System.nanoTime()-started;return;}
+    if(coldBytes<=limit&&coldDerivedBytes<=meshLimit&&cold.size()<=MAX_COLD_ROADS){trimNanos+=System.nanoTime()-started;return;}
     // A stable cache does no geometry accounting. Under pressure, retire at most
     // four owners per tick and yield after 0.5 ms; shared releases are recounted
     // once on the next tick, not after every victim.
     int work=0;long deadline=System.nanoTime()+500_000L;var owners=new ArrayList<>(cold.keySet());
     for(int checked=0;checked<owners.size()&&checked<16;checked++){
-      if(coldBytes+coldDerivedBytes<=limit&&cold.size()<=512)break;
+      if(coldBytes<=limit&&coldDerivedBytes<=meshLimit&&cold.size()<=MAX_COLD_ROADS)break;
       if(work>=4||checked>0&&System.nanoTime()>=deadline)break;
       UUID id=owners.get(Math.floorMod(coldCursor++,owners.size()));
       // A load event may still be waiting behind other coalesced events. Never
@@ -148,12 +152,12 @@ public final class ClientRoads {
       var present=INDEX.roads.get(id);var level=Minecraft.getInstance().level;
       if(present!=null&&level!=null&&present.chunks.stream().anyMatch(chunk->chunkLoaded(level,chunk))){awaken(id);continue;}
       trimVisits++;long before=coldWeights.getOrDefault(id,0L);
-      if(coldBytes>limit||cold.size()>512){
+      if(coldBytes>limit||cold.size()>MAX_COLD_ROADS){
         var road=INDEX.roads.get(id);if(road!=null)road.chunks.forEach(coldSync::evicted);
         coldDerivedBytes-=before;pruned++;evictSource(id);work++;continue;
       }
       if(before==0)continue;
-      if(coldGpuTrimmed.add(id))RoadRenderer.discardColdGpu(id);else {RoadRenderer.discardDerived(id);derivedEvictions++;}
+      if(!RoadRenderer.releaseCompletedPreparation(id)){RoadRenderer.discardDerived(id);derivedEvictions++;}
       long after=RoadRenderer.retainedRoadBytes(id);coldDerivedBytes-=Math.max(0,before-after);work++;
     }
     trimNanos+=System.nanoTime()-started;
@@ -273,7 +277,7 @@ public final class ClientRoads {
       }
       if(type.equals("roadBatch")){receiveBatch(t,batch);return;}
       if(type.equals("smartSigns")){SmartSignClient.receive(t);return;}
-      if (type.equals("road")) {
+      if (type.equals("road")||type.equals("roadCluster")) {
         RoadRecord r = decoded == null ? RoadRecord.load(t.getCompound("Road")) : decoded.record;
         var previous = INDEX.roads.get(r.id());
         awaken(r.id());
@@ -284,8 +288,10 @@ public final class ClientRoads {
           if (previous != null) INDEX.surfaceNeighbors(previous).forEach(b -> changed.add(b.record.id()));
           var built = decoded == null ? new RoadIndex.Built(r, true) : decoded;
           SmartSignClient.roadChanged(r.id());INDEX.put(built);SidewalkBlockModels.changed(INDEX,built.record.id());residencyRoads.add(r.id());
-          INDEX.surfaceNeighbors(built).forEach(b -> changed.add(b.record.id()));
-          RoadRenderer.changed(changed);
+          INDEX.surfaceNeighbors(built).stream().filter(b->previous!=null||!built.sameJunctionTriangles(b))
+              .forEach(b -> changed.add(b.record.id()));
+          if(previous==null)RoadRenderer.sourceArrived(r.id(),changed);
+          else RoadRenderer.changed(changed);
         }
 
       } else if (type.equals("lanePoints")) {
@@ -317,10 +323,10 @@ public final class ClientRoads {
   private static final LinkedHashSet<UUID> receivedBatches=new LinkedHashSet<>();
   private static void receiveBatch(CompoundTag packet,List<RoadIndex.Built> decoded){
     UUID token=packet.getUUID("Batch");if(receivedBatches.contains(token)){RoadNetwork.ackBatch(token);return;}
-    var batch=decoded.isEmpty()?packet.getList("Roads",net.minecraft.nbt.Tag.TAG_COMPOUND).stream().map(t->new RoadIndex.Built(RoadRecord.load((CompoundTag)t),true)).toList():decoded;
+    var batch=decoded.isEmpty()?RoadSnapshotCodec.read(packet).stream().map(t->new RoadIndex.Built(t,true)).toList():decoded;
 
     var ids=new HashSet<UUID>();for(var r:batch)ids.add(r.record.id());var changed=new HashSet<>(ids);
-    for(var entry:packet.getList("Replaced",net.minecraft.nbt.Tag.TAG_COMPOUND)){UUID id=((CompoundTag)entry).getUUID("Id");changed.add(id);var old=INDEX.roads.get(id);if(old!=null)INDEX.surfaceNeighbors(old).forEach(r->changed.add(r.record.id()));if(!ids.contains(id)){var weight=cold.remove(id);if(weight!=null){coldBytes-=weight;coldChanged();coldGpuTrimmed.remove(id);}INDEX.remove(id);SmartSignClient.remove(id);}}
+    for(var entry:packet.getList("Replaced",net.minecraft.nbt.Tag.TAG_COMPOUND)){UUID id=((CompoundTag)entry).getUUID("Id");changed.add(id);var old=INDEX.roads.get(id);if(old!=null)INDEX.surfaceNeighbors(old).forEach(r->changed.add(r.record.id()));if(!ids.contains(id)){var weight=cold.remove(id);if(weight!=null){coldBytes-=weight;coldChanged();}INDEX.remove(id);SmartSignClient.remove(id);}}
     for(var r:batch){awaken(r.record.id());SmartSignClient.roadChanged(r.record.id());INDEX.put(r);SidewalkBlockModels.changed(INDEX,r.record.id());residencyRoads.add(r.record.id());}
     for(var r:batch)INDEX.surfaceNeighbors(r).forEach(b->changed.add(b.record.id()));
     for(var entry:packet.getList("SignPackets",net.minecraft.nbt.Tag.TAG_COMPOUND))SmartSignClient.receive((CompoundTag)entry);
@@ -330,11 +336,12 @@ public final class ClientRoads {
   private static void remove(UUID id) {remove(id,false);}
   private static void evictSource(UUID id) {remove(id,true);}
   private static void remove(UUID id,boolean localEviction) {
-    var weight=cold.remove(id);if(weight!=null){coldBytes-=weight;coldChanged();coldGpuTrimmed.remove(id);}
+    var weight=cold.remove(id);if(weight!=null){coldBytes-=weight;coldChanged();}
     var old = INDEX.roads.get(id);
     Set<UUID> changed = new HashSet<>();
     changed.add(id);
-    if (old != null) INDEX.surfaceNeighbors(old).forEach(b -> changed.add(b.record.id()));
+    if (old != null) INDEX.surfaceNeighbors(old).stream().filter(b->!localEviction||!old.sameJunctionTriangles(b))
+        .forEach(b -> changed.add(b.record.id()));
     INDEX.remove(id);if(localEviction)SmartSignClient.evictSource(id);else SmartSignClient.remove(id);
     if(localEviction)RoadRenderer.sourceEvicted(changed);else RoadRenderer.changed(changed);
   }
@@ -494,13 +501,18 @@ public final class ClientRoads {
     var level = Minecraft.getInstance().level;
     if (level == null) return;
     long streamDeadline=System.nanoTime()+500_000;
-    var chunks=new RoadScanBudget(16,streamDeadline);
+    var chunks=new RoadScanBudget(64,streamDeadline);
     while(!residencyChunks.isEmpty()&&chunks.take()){
       var it=residencyChunks.iterator();long chunk=it.next();it.remove();
-      residencyRoads.addAll(INDEX.inChunk(chunk));
-      if(chunkLoaded(level,chunk))coldSync.arrived(chunk);
+      var owners=INDEX.inChunk(chunk);
+      if(chunkLoaded(level,chunk)){
+        coldSync.arrived(chunk);
+        // This chunk already proves residency for every owner in it. Publish
+        // retained pavement on this tick, ahead of queued unload scans.
+        for(var id:owners){residencyRoads.remove(id);awaken(id);}
+      }else residencyRoads.addAll(owners);
     }
-    var roads=new RoadScanBudget(16,streamDeadline);
+    var roads=new RoadScanBudget(64,streamDeadline);
     while(!residencyRoads.isEmpty()&&roads.take()){
       var it=residencyRoads.iterator();UUID id=it.next();it.remove();refreshResidency(level,id);
     }

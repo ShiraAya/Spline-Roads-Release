@@ -19,7 +19,7 @@ public final class JunctionTool extends Item {
     if(!(context.getPlayer() instanceof ServerPlayer player))return InteractionResult.PASS;
     try {
       BlockPos p=RoadTool.endpointAtHit(context);
-      if(player.serverLevel().getBlockEntity(p) instanceof NodeEntity) {
+      if(RoadTool.visibleEndpoint(player.serverLevel(),p)) {
         RoadData.requireNode(player.serverLevel(),p,player);var tag=context.getItemInHand().getOrCreateTag();
         if(tag.getLongArray("Points").length==0){
           var data=RoadData.get(player.serverLevel());

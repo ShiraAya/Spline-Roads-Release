@@ -1,1 +1,6 @@
-{"parent":"splineroads:item/endpoint_creator","textures":{"r":"minecraft:block/cyan_concrete","particle":"minecraft:block/cyan_concrete"}}
+{
+  "parent": "splineroads:item/tool_sprite",
+  "textures": {
+    "layer0": "splineroads:item/gui/elevated_access_creator"
+  }
+}

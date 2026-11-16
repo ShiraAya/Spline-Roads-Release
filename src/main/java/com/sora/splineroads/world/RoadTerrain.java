@@ -72,7 +72,9 @@ final class RoadTerrain {
               net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
           if(state.is(net.minecraft.tags.BlockTags.LEAVES)
               ||state.is(net.minecraft.tags.BlockTags.LOGS)
-              ||state.is(SplineRoads.NODE.get())||!state.getFluidState().isEmpty())continue;
+              ||state.is(SplineRoads.NODE.get()))continue;
+          // Fluid has no collision shape, but a waterlogged solid is still a
+          // bearing. Skipping every fluid-bearing state bored through riverbeds.
           var shape=state.getCollisionShape(level,p);
           for(var box:shape.toAabbs())out.add(box.move(p));
           // A full cube hides every lower surface in this column.

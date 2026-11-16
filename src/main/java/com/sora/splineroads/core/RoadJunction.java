@@ -561,7 +561,9 @@ public final class RoadJunction {
         V edge = mid.at(side * mid.halfWidth(), 0);
         for (Mesh ramp : neighbors) {
           if (!ramp.settings().style().ramp() && ramp.settings().options().lanePoints().link()==null) continue;
-          var q = RoadQueries.horizontal(ramp, edge);
+          // A loop may cross this exact XZ above its own auxiliary throat.
+          // Select the coplanar branch, not the closest branch in the map view.
+          var q = RoadQueries.project(ramp, edge);
           // A lane carried away in its entirety is not an auxiliary lane joining
           // the mainline. Keep its normal exposed edge, not an invented merge guide.
           var link=ramp.settings().options().lanePoints().link();
@@ -599,8 +601,8 @@ public final class RoadJunction {
       Map<Mesh,RoadRailJoin> boundaries,List<Mesh> neighbors){
     var la=RoadProfile.layout(main,a);var lb=RoadProfile.layout(main,b);
     boolean motor=la.cycleWidth()>.01;
-    var qa=RoadQueries.horizontal(ramp,a.at(motor?la.outer(side):side*a.halfWidth(),0));
-    var qb=RoadQueries.horizontal(ramp,b.at(motor?lb.outer(side):side*b.halfWidth(),0));
+    var qa=RoadQueries.project(ramp,a.at(motor?la.outer(side):side*a.halfWidth(),0));
+    var qb=RoadQueries.project(ramp,b.at(motor?lb.outer(side):side*b.halfWidth(),0));
     var ra=qa.sample();var rb=qb.sample();int inside=ra.left().dot(a.center().sub(ra.center()))<0?-1:1;
     double ia=RoadRailJoin.inset(ramp,ra,inside),ib=RoadRailJoin.inset(ramp,rb,inside);
     V first=ra.at(inside*(ra.halfWidth()-ia),0),last=rb.at(inside*(rb.halfWidth()-ib),0);
@@ -897,6 +899,14 @@ public final class RoadJunction {
       }
     }
     return List.copyOf(out);
+  }
+
+  /** Narrow generated ordinary-road ports widen into the host's shoulder. */
+  public static boolean ordinaryAuxiliary(Mesh ramp,Mesh host,boolean first){
+    if(ramp==null||host==null||RoadProfile.catalog(host.settings()).type()!=RoadProfile.Type.ORDINARY
+        ||ramp.settings().options().lanePoints().link()!=null)return false;
+    var end=first?ramp.first():ramp.last();
+    return end.halfWidth()<=.5&&taperClosure(ramp,host,first)&&ForkSignPlacement.onPath(host,end.center(),.35);
   }
 
   /** Legacy interchange auxiliary tapers need the same union boundary as authored lane links. */

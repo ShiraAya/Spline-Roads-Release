@@ -109,7 +109,7 @@ final class StructurePlanner {
         var pos=BlockPos.containing(bottom.x(),bottom.y()+1e-7,bottom.z());
         if(level.hasChunkAt(pos)){
           var state=RoadPlanInputs.state(level,pos);
-          if(!RoadBlocks.isCollider(state)&&state.getDestroySpeed(level,pos)<0&&pos.getY()+1-bottom.y()>missingDepth){missingDepth=pos.getY()+1-bottom.y();obstruction=pos;}
+          if(!TunnelAir.isAirSpace(state)&&!RoadBlocks.isCollider(state)&&state.getDestroySpeed(level,pos)<0&&pos.getY()+1-bottom.y()>missingDepth){missingDepth=pos.getY()+1-bottom.y();obstruction=pos;}
         }
       }
     }
@@ -136,7 +136,8 @@ final class StructurePlanner {
     // Lane connectors and automatic interchange ramps share one paved boundary.
     // UUID/depth gives one owner when
     // the rail centrelines coincide; no capsule or distance-only opening can erase them.
-    boolean laneEdges=built.mesh.settings().style().ramp()||nearby.stream().anyMatch(r->r.mesh.settings().style().ramp())||LaneTopology.metadata(built.record).link()!=null||nearby.stream().anyMatch(r->LaneTopology.metadata(r.record).link()!=null);
+    boolean laneEdges=built.mesh.settings().style().ramp()||nearby.stream().anyMatch(r->r.mesh.settings().style().ramp())||LaneTopology.metadata(built.record).link()!=null||nearby.stream().anyMatch(r->LaneTopology.metadata(r.record).link()!=null)
+        ||nearby.stream().anyMatch(r->ElevatedAccess.joins(built.mesh,r.mesh)||ElevatedAccess.joins(r.mesh,built.mesh));
     var railJoin=laneEdges?new RoadRailJoin(built.mesh,nearby.stream().map(r->new RoadRailJoin.Neighbor(r.mesh,
         RoadSurface.higherPriority(r.record.id(),r.mesh,built.record.id(),built.mesh))).toList()):null;
     var capMouths=RoadRailJoin.mouths(nearby.stream().filter(r->LaneMerge.linkedTo(built.mesh,r.mesh)||LaneMerge.linkedTo(r.mesh,built.mesh)||LaneTopology.metadata(built.record).cuts().stream().anyMatch(c->c.connection().equals(r.record.id()))).map(r->r.mesh).toList());
@@ -212,6 +213,8 @@ final class StructurePlanner {
                 return MultiLevelBridges.supports(mesh,lowerDecks,at,mesh.settings().thickness(),depth,width,offset,this);
               }
               public List<RoadStructures.Part> fixedSupports(){return !builtRecord.settings().options().infrastructure().supportsEnabled()?List.of():builtRecord.fragment()==null?null:builtRecord.fragment().supports();}
+              public boolean unchangedFixedSupport(RoadStructures.Part part){return lookup.unchangedFixedSupport(built,part);}
+              public String fixedSupportConflict(RoadStructures.Part part){return String.format(Locale.ROOT,"原桥墩与新的通行区冲突；冲突道路 %s，坐标 %.2f %.2f %.2f；%s",builtRecord.id(),part.a().x(),part.a().y(),part.a().z(),blockedReason(part));}
               public boolean requiredGantry(RoadGantry.Station station){return lookup.requiredGantry(builtRecord.id(),station.slot());}
               public List<RoadStructures.Part> preservedGantry(RoadGantry.Station station){return lookup.preservedGantry(builtRecord.id(),station);}
               public void missingSupport(double station,String reason){missingSupports.add(String.format(Locale.ROOT,"%.2f: %s",station,reason));}
@@ -220,8 +223,17 @@ final class StructurePlanner {
               public boolean closedLanePlanting(UUID connection){
                 return planting.computeIfAbsent(connection,id->nearby.stream().filter(r->r.record.id().equals(id)).noneMatch(r->buried(r.mesh,this)));
               }
+              public boolean medianClear(V point){
+                if(LanePoints.opening(built.mesh,point,false)||RoadSignals.furnitureClear(point,approaches))return true;
+                for(var road:nearby)if((!ElevatedAccess.joins(built.mesh,road.mesh)&&RoadQueries.joins(built.mesh,road.mesh,point))
+                    ||RailwayCrossings.at(built.mesh,road.mesh,point,1)||RailwayCrossings.walkingAt(built.mesh,road.mesh,point,1))return true;
+                return false;
+              }
               public boolean furnitureClear(V point) {
                 return LanePoints.opening(built.mesh,point)||RoadSignals.furnitureClear(point, approaches)||nearby.stream().anyMatch(r->RailwayCrossings.at(built.mesh,r.mesh,point,1)||RailwayCrossings.walkingAt(built.mesh,r.mesh,point,1));
+              }
+              public boolean cyclePlantingContinues(Mesh mesh,boolean first,int side){
+                return nearby.stream().anyMatch(r->RoadStructures.cyclePlantingContinues(mesh,r.mesh,first,side));
               }
               public boolean wireContinues(boolean first){
                 return nearby.stream().anyMatch(r->RailbedFurniture.continues(built.mesh,r.mesh,r.record.structures(),first));
@@ -234,8 +246,21 @@ final class StructurePlanner {
               }
 
               public double top(double x,double z,double deckY){return terrain.top(x,z,deckY);}
+              public List<Double> supportStations(Mesh mesh){
+                var stations=new TreeSet<Double>();
+                for(var other:obstacles)if(other.record.junction()!=null){
+                  var center=other.record.junction().spec().center();var q=RoadQueries.horizontal(mesh,center);
+                  if(q.horizontalDistance()<.5&&q.sample().center().y()>center.y()+5)stations.add(q.sample().distance());
+                }
+                return List.copyOf(stations);
+              }
               public double foundation(V center,double top,double width){
                 double median=RoadSupports.medianFoundation(center,top,width,obstacles.stream().map(r->r.mesh).toList());
+                var foot=new RoadStructures.Part(new V(center.x(),top,center.z()),new V(center.x(),top,center.z()),width,.35,true,RoadStructures.Material.CONCRETE);
+                for(var other:obstacles)if(JunctionSupportSpace.contains(foot,other.record.junction())){
+                  double floor=other.record.junction().spec().center().y();
+                  if(floor<top-.4&&(!Double.isFinite(median)||floor>median))median=floor;
+                }
                 return sidewalkSolids.foundation(center,top,width,median,()->terrain.foundation(center,top,width));
               }
               public double surface(double x,double z,double roadY){return terrain.surface(x,z,roadY);}
@@ -356,7 +381,7 @@ final class StructurePlanner {
                   }
                   // Use the actual shaft prism and the live deck bands, including
                   // framed/tilted supports, instead of the voxel-column envelope.
-                  if(RoadStructureClearance.pierBlocked(part,other.mesh,nearby.stream().map(r->r.mesh).toList()))return true;
+                  if(!JunctionSupportSpace.contains(part,other.record.junction())&&RoadStructureClearance.pierBlocked(part,other.mesh,nearby.stream().map(r->r.mesh).toList()))return true;
                 }
                 return false;
               }

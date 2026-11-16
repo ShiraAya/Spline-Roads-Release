@@ -11,8 +11,27 @@ import net.minecraft.server.level.*;
 /** A service interchange keeps the existing lower intersection and connects its parallel street. */
 public final class ParallelSpui {
   private static final String KEY="ParallelJunction";
+  // A smooth zero-grade landing has a 1.5x peak/mean grade. Reserve the two
+  // authored transitions separately and target a 13% climbing section.
+  static double rampRun(double height,InterchangePlanner.Options options){
+    return 2*options.transition()+Math.max(2*options.radius(),1.5*Math.abs(height)/.13);
+  }
   public static boolean present(CompoundTag t){return t.contains(KEY);}
   public static boolean active(CompoundTag t){return present(t)&&Interchanges.read(t.getCompound("Options")).preset()==InterchangePlanner.Preset.SPUI;}
+  /** Host roads remain independently owned roads; their assembly field is deliberately empty. */
+  static UUID groupAt(RoadData data,RoadRecord road,V hit){
+    UUID best=null;double distance=Double.POSITIVE_INFINITY;
+    for(var entry:data.interchanges.entrySet()){
+      var saved=entry.getValue();if(!active(saved))continue;var context=saved.getCompound(KEY);
+      boolean member=road.id().equals(context.getUUID("Upper"))||Objects.equals(road.assembly(),context.getUUID("Center"));
+      for(Tag lower:context.getList("Lower",Tag.TAG_STRING))member|=road.id().toString().equals(lower.getAsString());
+      if(!member)continue;
+      var center=data.junctions.get(context.getUUID("Center"));if(center==null||!center.contains("Spec"))continue;
+      double next=JunctionCodec.read(center.getCompound("Spec")).center().sub(hit).horizontalLength();
+      if(next<distance){distance=next;best=entry.getKey();}
+    }
+    return best;
+  }
   public static int ordinal(int lanes,int rampLanes){
     if(lanes<(rampLanes==2?3:2))throw new IllegalArgumentException("下层每方向至少需要 "+(rampLanes==2?3:2)+" 条车道才能生成"+(rampLanes==2?"双":"单")+"车道匝道");
     // slot() numbers from the median; the requested rule numbers from outside.
@@ -52,7 +71,17 @@ public final class ParallelSpui {
     for(UUID id:hosts){var mesh=data.index.roads.get(id).mesh;minX=Math.min(minX,mesh.min().x());minZ=Math.min(minZ,mesh.min().z());maxX=Math.max(maxX,mesh.max().x());maxZ=Math.max(maxZ,mesh.max().z());}
     var options=Interchanges.read(t.getCompound("Options"));var location=JunctionCodec.read(center.getCompound("Spec")).center();
     double padding=options.adjustEndpoints()?Math.max(512,Math.abs(RoadQueries.horizontal(upper.mesh,location).sample().center().y()-location.y())/.055+4*options.transition()+JunctionPlanner.radius(JunctionCodec.read(center.getCompound("Spec")))+240):256;
-    var roads=new ListTag();for(var r:data.index.roads.values())if(r.mesh.max().x()>=minX-padding&&r.mesh.min().x()<=maxX+padding&&r.mesh.max().z()>=minZ-padding&&r.mesh.min().z()<=maxZ+padding)roads.add(r.record.header());tag.put("Roads",roads);
+    var roads=new ListTag();var junctions=new ListTag();var references=new HashMap<CompoundTag,Integer>();
+    for(var r:data.index.roads.values())if(r.mesh.max().x()>=minX-padding&&r.mesh.min().x()<=maxX+padding&&r.mesh.max().z()>=minZ-padding&&r.mesh.min().z()<=maxZ+padding){
+      var header=r.record.header();
+      if(header.contains("Junction")){
+        var shared=header.getCompound("Junction");int piece=shared.getInt("Piece");shared.remove("Piece");
+        int reference=references.computeIfAbsent(shared,key->{int slot=junctions.size();junctions.add(key);return slot;});
+        var ref=new CompoundTag();ref.putInt("Template",reference);ref.putInt("Piece",piece);header.put("Junction",ref);
+      }
+      roads.add(header);
+    }
+    tag.put("Roads",roads);tag.put("SharedJunctions",junctions);
     t.put("Main1",RoadRecord.writeSettings(upper.record.settings()));t.put("Main2",RoadRecord.writeSettings(data.index.roads.get(UUID.fromString(tag.getList("Lower",Tag.TAG_STRING).getString(0))).record.settings()));
     t.putString("Kind","interchange");return true;
   }
@@ -60,9 +89,15 @@ public final class ParallelSpui {
   private static UUID identity(UUID group,String name){return UUID.nameUUIDFromBytes((group+":parallel-spui:"+name).getBytes(StandardCharsets.UTF_8));}
   private static UUID group(CompoundTag t){return t.hasUUID("Id")?t.getUUID("Id"):UUID.nameUUIDFromBytes(Arrays.toString(t.getLongArray("Points")).getBytes(StandardCharsets.UTF_8));}
   private record Draft(Map<UUID,RoadRecord> context,List<RoadRecord> hosts,List<RoadRecord> ramps,List<UUID> points,V center){}
+  private static RoadRecord contextRoad(CompoundTag context,CompoundTag header){
+    var ref=header.getCompound("Junction");if(!ref.contains("Template"))return RoadRecord.load(header);
+    var templates=context.getList("SharedJunctions",Tag.TAG_COMPOUND);int index=ref.getInt("Template");
+    if(index<0||index>=templates.size())throw new IllegalArgumentException("路口引用已失效，请重新打开立交设置");
+    var full=header.copy();var junction=templates.getCompound(index).copy();junction.putInt("Piece",ref.getInt("Piece"));full.put("Junction",junction);return RoadRecord.load(full);
+  }
   private static Map<UUID,RoadRecord> context(CompoundTag t){
     UUID group=group(t);var removed=new HashSet<UUID>();for(int i=0;i<4;i++)removed.add(identity(group,"ramp:"+i));var pointIds=new HashSet<UUID>();for(int i=0;i<8;i++)pointIds.add(identity(group,"point:"+i));var roads=new LinkedHashMap<UUID,RoadRecord>();
-    for(Tag v:t.getCompound(KEY).getList("Roads",Tag.TAG_COMPOUND)){var r=RoadRecord.load((CompoundTag)v);if(removed.contains(r.id()))continue;var md=LaneTopology.metadata(r);var clean=md.points(md.points().stream().filter(p->!pointIds.contains(p.id())).toList()).cuts(md.cuts().stream().filter(c->!removed.contains(c.connection())).toList()).openings(md.openings().stream().filter(o->!removed.contains(o.connection())).toList());roads.put(r.id(),clean.equals(md)?r:r.withLanePoints(clean));}
+    for(Tag v:t.getCompound(KEY).getList("Roads",Tag.TAG_COMPOUND)){var r=contextRoad(t.getCompound(KEY),(CompoundTag)v);if(removed.contains(r.id()))continue;var md=LaneTopology.metadata(r);var clean=md.points(md.points().stream().filter(p->!pointIds.contains(p.id())).toList()).cuts(md.cuts().stream().filter(c->!removed.contains(c.connection())).toList()).openings(md.openings().stream().filter(o->!removed.contains(o.connection())).toList());roads.put(r.id(),clean.equals(md)?r:r.withLanePoints(clean));}
     return roads;
   }
   private static int slot(RoadRecord road,double station,V direction,int ordinal,int lanes){
@@ -175,7 +210,7 @@ public final class ParallelSpui {
     }
     if(o.adjustEndpoints()){
       double height=RoadQueries.horizontal(upper.mesh(),center).sample().center().y()-center.y();
-      double run=Math.max(160,height/.055+2*o.transition()+96),margin=Math.max(64,2*o.transition());
+      double run=rampRun(height,o),margin=Math.max(64,2*o.transition());
       for(Tag v:tag.getList("Lower",Tag.TAG_STRING)){UUID id=UUID.fromString(v.getAsString());V outward=away(all.get(id),node);double setback=setback(spec,all.get(id));
         fit(all,id,center.add(outward.mul(setback)),Math.max(margin,continuation(all.get(id),o)),node);
         fit(all,upper.id(),center.add(outward.mul(setback+run)),margin,null);
@@ -192,7 +227,7 @@ public final class ParallelSpui {
       for(boolean down:new boolean[]{true,false}){
         V direction=away.mul(down?-1:1);int count=0;for(int i=0;i<RoadProfile.catalog(lower.settings()).lanes();i++)if(LanePoints.lane(lower.rawMesh(),local,i).direction().dot(direction)>.85)count++;
         int chosen=slot(lower,local,direction,ordinal(count,o.lanes()),o.lanes());
-        double height=RoadQueries.horizontal(upper.mesh(),center).sample().center().y()-center.y();double run=Math.max(160,height/.055+2*o.transition()+96);
+        double height=RoadQueries.horizontal(upper.mesh(),center).sample().center().y()-center.y();double run=rampRun(height,o);
         double high=station(upper,center.add(away.mul(setback+run)));int outer=slot(upper,high,direction,-1,1);
         int boundary=slot(lower,local,direction,count-(o.lanes()==2?2:1),1);
         requireOutsideDeck(lower,local,boundary,o.lanes(),upper);
@@ -296,7 +331,7 @@ public final class ParallelSpui {
     for(var entry:logical.entrySet())data.streets.put(entry.getKey(),entry.getValue().withLanePoints(LaneTopology.metadata(data.index.roads.get(entry.getKey()).record)));
     t=t.copy();Interchanges.clearRemovedDesign(t);long[] points=t.getLongArray("Points");for(int i=0;i<points.length;i++)points[i]=positions.getOrDefault(points[i],points[i]);t.putLongArray("Points",points);
     var nodes=new ListTag();for(Tag v:t.getList("Nodes",Tag.TAG_COMPOUND)){var n=RoadRecord.readNode((CompoundTag)v);var move=moves.stream().filter(m->m.from().equals(RampJunctions.at(n.position()))).findFirst();nodes.add(RoadRecord.writeNode(move.isPresent()?move.get().target():n));}t.put("Nodes",nodes);
-    t.putUUID("Id",group);t.putUUID("Owner",d.hosts().get(0).owner());t.getCompound(KEY).remove("Roads");data.interchanges.put(group,t);data.setDirty();return "单点菱形已连接已有下层路口，四条匝道按指定车道生成";
+    t.putUUID("Id",group);t.putUUID("Owner",d.hosts().get(0).owner());t.getCompound(KEY).remove("Roads");t.getCompound(KEY).remove("SharedJunctions");data.interchanges.put(group,t);data.setDirty();return "单点菱形已连接已有下层路口，四条匝道按指定车道生成";
   }
   static void remove(ServerLevel level,ServerPlayer player,CompoundTag saved){
     var data=RoadData.get(level);capture(data,saved,player);UUID group=saved.getUUID("Id");var cleaned=context(saved);var built=new ArrayList<RoadIndex.Built>();var removed=new HashSet<UUID>();var selected=new HashSet<BlockPos>();

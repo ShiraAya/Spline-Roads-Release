@@ -25,7 +25,54 @@ public final class ElevatedAccess {
     var gaps=r.gaps().stream().map(g->new Gap(g.from()+offset,g.to()+offset,g.low(),g.high())).toList();
     return new Reservation(r.connection(),r.point(),cuts,adds,gaps);
   }
+  /** A host stores the exact connector centerline in its opening receipt. */
+  public static boolean joins(Mesh host,Mesh connector){
+    var lanes=host.settings().options().lanePoints();
+    if(lanes.access().isEmpty())return false;
+    for(var opening:lanes.openings()){
+      var points=opening.centerline();
+      if(points.size()<2||lanes.access().stream().noneMatch(r->r.connection().equals(opening.connection())))continue;
+      var first=points.get(0);var last=points.get(points.size()-1);
+      if(first.distance(connector.first().center())<1e-6&&last.distance(connector.last().center())<1e-6)return true;
+    }
+    return false;
+  }
   public record Plan(Mesh road,Reservation reservation,List<Direction> directions){public Plan{directions=List.copyOf(directions);}}
+
+  /** Refit old, direction-wide reservations to the actual overhead slab. */
+  public static Reservation fit(Mesh host,Mesh connector,Reservation reservation){
+    if(reservation.gaps().isEmpty()&&reservation.cuts().isEmpty())return reservation;
+    var prepared=RoadClearance.prepare(connector);
+    var cuts=new ArrayList<LaneSections.Cut>();
+    for(var cut:reservation.cuts()){
+      double low=Math.min(cut.begin(),cut.end()),high=Math.max(cut.begin(),cut.end());
+      var range=obstruction(LaneReopening.laneSweep(host,cut.lane()),prepared,low,high,1);
+      if(range==null)continue;
+      cuts.add(new LaneSections.Cut(cut.connection(),cut.lane(),cut.sign(),cut.sign()>0?range[0]:range[1],
+          cut.sign()>0?range[1]:range[0],cut.transition(),cut.replacement(),cut.temporary(),cut.arrival(),cut.rectangular(),cut.underpass()));
+    }
+    var gaps=new ArrayList<Gap>();
+    for(var gap:reservation.gaps()){
+      double center=(gap.low()+gap.high())/2,half=(gap.high()-gap.low())/2;
+      var samples=host.samples().stream().map(s->new Sample(s.at(center,0),s.left(),s.distance(),half)).toList();
+      var bounds=RoadRibbon.mesh(samples,host.settings());
+      var median=new Mesh(samples,host.settings().options(host.settings().options().lanePoints(LanePoints.Data.EMPTY)),
+          bounds.min(),bounds.max(),host.length(),host.closed(),null);
+      var range=obstruction(median,prepared,gap.from(),gap.to(),.15);
+      if(range!=null)gaps.add(new Gap(range[0],range[1],gap.low(),gap.high()));
+    }
+    return new Reservation(reservation.connection(),reservation.point(),cuts,reservation.additions(),gaps);
+  }
+  private static double[] obstruction(Mesh sweep,RoadClearance.Prepared connector,double low,double high,double margin){
+    double from=Double.POSITIVE_INFINITY,to=Double.NEGATIVE_INFINITY;
+    for(var contact:RoadClearance.contacts(sweep,connector)){
+      if(!contact.blocked()||contact.to()<=low||contact.from()>=high)continue;
+      from=Math.min(from,contact.from());to=Math.max(to,contact.to());
+    }
+    if(from==Double.POSITIVE_INFINITY)return null;
+    from=Math.max(low,from-margin);to=Math.min(high,to+margin);
+    return to-from>1e-7?new double[]{from,to}:null;
+  }
 
   public static List<Direction> directions(Mesh host,double station,int forward,int reverse){
     if(forward<0||reverse<0||forward+reverse==0)throw new IllegalArgumentException("高架至少需要一个行驶方向");
@@ -114,8 +161,9 @@ public final class ElevatedAccess {
         }
       }
       if(selected.size()>1&&median>0&&medianTo>medianFrom)gaps.add(new Gap(medianFrom,medianTo,hostLayout.medianCenter()-median/2,hostLayout.medianCenter()+median/2));
-      var reservation=new Reservation(id,point,cuts,additions,gaps);
-      var md=host.settings().options().lanePoints();var allCuts=new ArrayList<>(md.cuts());allCuts.addAll(cuts);var allAdditions=new ArrayList<>(md.additions());allAdditions.addAll(additions);var allAccess=new ArrayList<>(md.access());allAccess.add(reservation);
+      var reservation=fit(host,path,new Reservation(id,point,cuts,additions,gaps));
+
+      var md=host.settings().options().lanePoints();var allCuts=new ArrayList<>(md.cuts());allCuts.addAll(reservation.cuts());var allAdditions=new ArrayList<>(md.additions());allAdditions.addAll(additions);var allAccess=new ArrayList<>(md.access());allAccess.add(reservation);
       var effective=LaneSections.apply(RoadRibbon.mesh(host.samples(),host.settings().options(host.settings().options().lanePoints(md.access(allAccess).cuts(allCuts).additions(allAdditions)))));
       RoadClearance.check(path,effective,null);
       return new Plan(pointFirst?path:reverse(path,base),reservation,selected);

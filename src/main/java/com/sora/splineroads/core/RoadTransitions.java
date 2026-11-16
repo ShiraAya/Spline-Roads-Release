@@ -36,6 +36,24 @@ public final class RoadTransitions {
       return new Section(s.style(), s.width(), o.cycle(), o.cycleRail(), o.curb(), o.outerRail(),o.sidewalk(),o.cycleAsphalt(),o.ends().port(),o.streetscape(),o.lanes());
     }
 
+    private static void requireSettings(Settings s){
+      var o=s.options();var rail=o.outerRail();o.ends().port();
+      if(s.style()==null||rail==null||!Double.isFinite(s.width())
+          ||s.width()<2||s.width()>RoadLimits.maximumWidth(s.style()))
+        throw new IllegalArgumentException("接缝断面无效");
+    }
+    /** Same value comparison as equals(of(s)), without allocating a temporary
+     * section for every point in a mesh. Keep the factory's width guard. */
+    boolean matches(Settings s){requireSettings(s);return matchesValid(s);}
+    private boolean matchesValid(Settings s){
+      var o=s.options();
+      return style==s.style()&&Double.compare(width,s.width())==0&&cycle==o.cycle()
+          &&cycleRail==o.cycleRail()&&curb==o.curb()&&outerRail==o.outerRail()
+          &&Objects.equals(sidewalk,o.sidewalk())&&cycleAsphalt==o.cycleAsphalt()
+          &&Objects.equals(port,o.ends().port())&&Objects.equals(streetscape,o.streetscape())
+          &&Objects.equals(lanes,o.lanes()==null?RoadLanes.Counts.AUTO:o.lanes());
+    }
+
     public Settings settings(boolean left) {
       return new Settings(Mode.STRAIGHT, style, width, 1, .4, 90)
           .options(
@@ -150,9 +168,9 @@ public final class RoadTransitions {
     var e = s.options().ends();
     boolean both =
         e.start() != null
-            && !e.start().equals(Section.of(s))
+            && !e.start().matches(s)
             && e.end() != null
-            && !e.end().equals(Section.of(s));
+            && !e.end().matches(s);
     return Math.min(length * (both ? .45 : .9), Math.max(36, delta * 8));
   }
 
@@ -181,13 +199,13 @@ public final class RoadTransitions {
     Layout base = RoadProfile.layout(s, p.halfWidth() * 2);
     var ends = s.options().ends();
     double station=p.distance()+ends.trimmedStart(),length=mesh.length()+ends.trimmedStart()+ends.trimmedEnd();
-    Section baseSection = Section.of(s);
+    Section.requireSettings(s);
     double startWeight =
-        ends.start() == null || ends.start().equals(baseSection)
+        ends.start() == null || ends.start().matchesValid(s)
             ? 0
             : endWeight(s,station,length,true);
     double endWeight =
-        ends.end() == null || ends.end().equals(baseSection)
+        ends.end() == null || ends.end().matchesValid(s)
             ? 0
             : endWeight(s,length-station,length,false);
     boolean start = startWeight >= endWeight;
@@ -212,10 +230,10 @@ public final class RoadTransitions {
   public static double railSeparation(Mesh mesh, Sample p, double band) {return railMeasure(mesh,p,band,false);}
   public static double railWidth(Mesh mesh, Sample p) {return railMeasure(mesh,p,0,true);}
   private static double railMeasure(Mesh mesh, Sample p, double band, boolean median) {
-    Settings s=mesh.settings();var ends=s.options().ends();var own=Section.of(s);
+    Settings s=mesh.settings();var ends=s.options().ends();Section.requireSettings(s);
     double station=p.distance()+ends.trimmedStart(),length=mesh.length()+ends.trimmedStart()+ends.trimmedEnd();
-    double a=ends.start()==null||ends.start().equals(own)?0:endWeight(s,station,length,true);
-    double b=ends.end()==null||ends.end().equals(own)?0:endWeight(s,length-station,length,false);
+    double a=ends.start()==null||ends.start().matchesValid(s)?0:endWeight(s,station,length,true);
+    double b=ends.end()==null||ends.end().matchesValid(s)?0:endWeight(s,length-station,length,false);
     var target=a>=b?ends.start():ends.end();double gap=s.options().streetscape().plantings().railGap();
     double base=railValue(gap,band,median);
     if(target==null)return base;

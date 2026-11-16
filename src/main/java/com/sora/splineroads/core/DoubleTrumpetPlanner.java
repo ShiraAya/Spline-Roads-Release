@@ -36,7 +36,7 @@ public final class DoubleTrumpetPlanner {
   Settings connector=RoadLanes.configure(new Settings(Mode.STRAIGHT,Style.O2_RAIL,10,1,.4,90).structure(Structure.AUTO)
       .options(RoadProfile.Options.DEFAULT.traffic(o.leftTraffic()).streetscape(RoadStreetscape.Config.DEFAULT.lamps(lamps))),
       RoadProfile.Type.ORDINARY,new RoadLanes.Counts(lanes,lanes),laneWidth);
-  var child=new Options(Preset.TRUMPET,o.leftTraffic(),o.lanes(),o.transition(),o.radius(),o.clearance(),o.upper(),o.rampWidth(),false);
+  var child=new Options(Preset.TRUMPET,o.leftTraffic(),o.lanes(),o.transition(),o.radius(),o.clearance(),o.upper(),o.rampWidth(),false).trumpet(o.trumpetStyle());
   V ca=center.sub(u.mul(offset)),cb=center.sub(v.mul(offset));
   Plan first=InterchangePlanner.plan(new Node[]{near(nodes[0],ca,u),near(nodes[1],ca,u),new Node(pa,RoadPlanner.yaw(na.mul(-1)),0)},a,connector,child);
   Plan second=InterchangePlanner.plan(new Node[]{near(nodes[2],cb,v),near(nodes[3],cb,v),new Node(pb,RoadPlanner.yaw(nb.mul(-1)),0)},b,connector,child);

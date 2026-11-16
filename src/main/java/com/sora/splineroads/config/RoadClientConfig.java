@@ -12,7 +12,7 @@ public final class RoadClientConfig {
   public static final ForgeConfigSpec.EnumValue<SurfaceBackend> SURFACE_BACKEND;
   public static final ForgeConfigSpec.IntValue TERRAIN_SECTIONS_PER_FRAME;
   public static final ForgeConfigSpec.IntValue VBO_UPLOAD_MICROS;
-  public static final ForgeConfigSpec.IntValue INACTIVE_VBO_CACHE_MIB,UNLOADED_VBO_CACHE_MIB,TERRAIN_CACHE_MIB,COLD_ROAD_CACHE_MIB;
+  public static final ForgeConfigSpec.IntValue INACTIVE_VBO_CACHE_MIB,UNLOADED_VBO_CACHE_MIB,TERRAIN_CACHE_MIB,COLD_ROAD_CACHE_MIB,COLD_MESH_CACHE_MIB;
   static {
     var b=new ForgeConfigSpec.Builder();b.push("rendering");
     SHOW_SIGNS=b.comment("Show road signs by default. /sr signs off skips sign baking and drawing without changing saved signs; /sr signs on restores display.").define("showSigns",true);
@@ -32,7 +32,10 @@ public final class RoadClientConfig {
         "0 disables retention. Reclamation is spread across frames; prepared CPU geometry remains available for local re-upload on return.")
         .defineInRange("unloadedVboCacheMiB",64,0,512);
     TERRAIN_CACHE_MIB=b.comment("Estimated MiB budget for unloaded/inactive terrain tiles (256 bytes/quad). 0 disables retention.").defineInRange("terrainCacheMiB",64,0,512);
-    COLD_ROAD_CACHE_MIB=b.comment("Estimated MiB retained for roads outside loaded chunks, including CPU geometry and both VBO encodings. Real delete/edit invalidates immediately.").defineInRange("coldRoadCacheMiB",128,0,512);
+    COLD_ROAD_CACHE_MIB=b.comment("Estimated MiB of source records retained outside loaded chunks. 0 also disables retention of their prepared meshes.")
+        .defineInRange("coldRoadCacheMiB",128,0,512);
+    COLD_MESH_CACHE_MIB=b.comment("Estimated MiB of prepared CPU meshes retained outside loaded chunks.",
+        "Unloaded VBOs use unloadedVboCacheMiB. Real delete/edit invalidates immediately.").defineInRange("coldMeshCacheMiB",384,0,768);
 
     b.pop();b.push("tools");SPLIT_CONNECTION=b.defineEnum("splitConnection",com.sora.splineroads.core.RoadSlicing.Connection.CONTINUOUS);STREET_STYLE=b.defineEnum("streetStyle",com.sora.splineroads.core.StreetPlan.Style.DOWNTOWN);b.pop();SPEC=b.build();
   }

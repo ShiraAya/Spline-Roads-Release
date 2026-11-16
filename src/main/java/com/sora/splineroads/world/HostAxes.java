@@ -16,7 +16,7 @@ public final class HostAxes {
     }
     if(!out.isEmpty())return List.copyOf(out);
     Node[] n=nodes(t);for(int i=0;i+1<n.length;i+=2)out.add(RoadAxis.straight(n[i].position(),n[i+1].position()));
-    if(n.length==3){V a=n[0].position(),u=n[1].position().sub(a).horizontalUnit(),c=n[2].position();V foot=a.add(u.mul(c.sub(a).dot(u)));out.add(RoadAxis.straight(c,new V(foot.x(),c.y(),foot.z())));}
+    if(n.length%2==1){V a=n[0].position(),u=n[1].position().sub(a).horizontalUnit(),c=n[n.length-1].position();V foot=a.add(u.mul(c.sub(a).dot(u)));out.add(RoadAxis.straight(c,new V(foot.x(),c.y(),foot.z())));}
     return List.copyOf(out);
   }
   public static void write(CompoundTag t,List<RoadAxis> axes){
@@ -24,15 +24,15 @@ public final class HostAxes {
   }
   static RoadAxis chain(List<RoadRecord> chain,BlockPos start){
     var points=new ArrayList<V>();BlockPos at=start;
-    for(var road:chain){boolean forward=road.a().equals(at);var samples=road.mesh().samples();
+    // End caps extend pavement beyond the authored marker; they are not part of
+    // the host centreline used to map a curved interchange's fixed endpoints.
+    for(var road:chain){boolean forward=road.a().equals(at);var samples=road.caps(0).mesh().samples();
       for(int j=0;j<samples.size();j++){V p=samples.get(forward?j:samples.size()-1-j).center();if(points.isEmpty()||p.distance(points.get(points.size()-1))>1e-5)points.add(p);}
       at=forward?road.b():road.a();
     }return new RoadAxis(points);
   }
   public static int signature(CompoundTag t){return t.getList("HostAxes",Tag.TAG_COMPOUND).hashCode();}
   public static boolean curved(CompoundTag t){return read(t).stream().anyMatch(RoadAxis::curved);}
-  public static boolean retiredInterchange(CompoundTag t){return !t.contains("Corridor")&&curved(t);}
-  public static final String RETIRED_MESSAGE="请选择两条直线主路";
   public static List<InterchangePlanner.Preset> presets(CompoundTag t){return ParallelSpui.present(t)?List.of(InterchangePlanner.Preset.SPUI):CurvedRoadPlans.presets(t.getLongArray("Points").length,curved(t));}
   public static boolean fixedFrontage(CompoundTag t){return t.contains("Corridor")&&CurvedRoadPlans.fixedFrontageHeight(nodes(t),Corridors.read(t.getCompound("Corridor")),read(t).get(0));}
   public static void normalizeCorridor(CompoundTag t){
@@ -40,7 +40,6 @@ public final class HostAxes {
     t.put("Corridor",Corridors.write(new CorridorPlanner.Config(c.kind(),c.sides(),CorridorPlanner.Access.NONE,c.gap(),nodes(t)[0].position().y(),c.adjustment())));
   }
   static void fit(CompoundTag t,List<Node> target){
-    if(target.size()>4)return;
     var axes=read(t);var fitted=new ArrayList<RoadAxis>();
     for(int i=0;i<axes.size();i++){
       RoadAxis axis=axes.get(i);double start=axis.project(target.get(i*2).position()),end=i*2+1<target.size()?axis.project(target.get(i*2+1).position()):axis.length();

@@ -17,7 +17,7 @@ public final class OneSidedJunction {
       road=RoadSlicing.attach(RoadSlicing.mesh(road.samples(),road.settings()),road.slicing()==null?new RoadSlicing.Geometry(List.of()):road.slicing());
       if(road.closed()||!RoadProfile.catalog(road.settings().style()).twoWay()
           ||!RoadGeometry.finite(from,to)||from<0||to>road.length()||to-from<16
-          ||Math.abs(side)!=1||structures.size()>50000)
+          ||Math.abs(side)!=1)
         throw new IllegalArgumentException("单边路口主路范围无效");
     }
     public int incoming(){return side>0?0:1;}

@@ -183,6 +183,9 @@ public final class RoadStructures {
   public interface Ground {
     /** Split paths own their existing foundations, including an intentionally empty list. */
     default List<Part> fixedSupports(){return null;}
+    default boolean unchangedFixedSupport(Part part){return false;}
+    default String fixedSupportConflict(Part part){return "原桥墩与新的通行区冲突，请先调整相关道路";}
+    default List<Double> supportStations(Mesh mesh){return List.of();}
     default boolean sharedDeck(){return false;}
     default List<Part> sharedSupports(Mesh mesh,Sample at,double depth,double width,double offset){return null;}
     /** Only the transaction may prove that an unchanged automatic split anchor
@@ -265,6 +268,9 @@ public final class RoadStructures {
     }
 
     default boolean furnitureClear(V point) { return false; }
+    /** Fixed/cropped ribbons have no editable end section; inspect their real neighbour. */
+    default boolean cyclePlantingContinues(Mesh mesh,boolean first,int side){return false;}
+    default boolean medianClear(V point){return joined(point)||furnitureClear(point);}
     /** A conductor may end at a shared bed boundary only with a live open-air continuation. */
     default boolean wireContinues(boolean first) { return false; }
     default boolean lampClear(V point) { return false; }
@@ -426,12 +432,15 @@ public final class RoadStructures {
     if(ground.sharedDeck()||!mesh.settings().options().infrastructure().supportsEnabled())return List.of();
     var gantries=new RoadSolidOverlap.Index(fixtures.stream().filter(RoadGantry::member).toList());
     java.util.function.Predicate<Part> blocked=p->ground.blocked(p)||gantries.intersects(p);
-    var fixed=ground.fixedSupports();if(fixed!=null){for(var part:fixed)if(blocked.test(part))throw new IllegalArgumentException("原桥墩与新的通行区冲突，请先调整相关道路");return fixed;}
+    var fixed=ground.fixedSupports();if(fixed!=null){for(var part:fixed)if(blocked.test(part)&&!ground.unchangedFixedSupport(part))throw new IllegalArgumentException(ground.fixedSupportConflict(part));return fixed;}
     var out=new ArrayList<Part>();
     double previous = -100;
     var missing=new ArrayList<Double>();var occupied=new ArrayList<Double>();
-    for (double target = phase.first(12, PIER_SPACING); target < mesh.length() - 1e-6;
-        target += PIER_SPACING) {
+    var preferred=ground.supportStations(mesh);
+    for (double scheduled = phase.first(12, PIER_SPACING); scheduled < mesh.length() - 1e-6;
+        scheduled += PIER_SPACING) {
+      double target=scheduled;
+      for(double d:preferred)if(Math.abs(d-scheduled)<=PIER_SPACING/2&&d>previous+10){target=d;break;}
       if(RailbedBridges.customAt(mesh,target))continue;
       // A local missing foundation does not make the whole cross section a bridge.
       // Only search piers where the usable deck is actually elevated.
@@ -841,14 +850,15 @@ public final class RoadStructures {
       var s = q.sample();
       var layout = RoadProfile.layout(lower,s);
       double usable = layout.median();
-      if (RoadTransitions.green(lower,s) * (1-RoadStreetscape.medianConversionBlend(lower,s)) < .12) {
+      double green=RoadTransitions.green(lower,s)*(1-RoadStreetscape.medianConversionBlend(lower,s));
+      if (green < .12) {
         boolean raised=RoadStreetscape.raised(lower,s);
         double band = RoadProfile.highway(lower.settings().style()) ? (raised?.62:.3) : (raised?.42:.1);
         double separation = Math.min(RoadTransitions.railSeparation(lower,s,band), Math.max(0,layout.median()-band));
         // The median includes both rails. Only their clear inner gap can hold
         // a foundation; a single central rail has no usable opening.
         usable = Math.max(0,separation-band);
-      }
+      }else usable=Math.max(0,(usable-.5)*green);
       if (s.distance() < 2 || s.distance() > lower.length() - 2
           || Math.abs(q.lateral()-layout.medianCenter()) + margin > usable / 2)
         return false;
@@ -924,6 +934,29 @@ public final class RoadStructures {
     return layout.catalog().median()==RoadProfile.Median.GREEN&&layout.median()>.5;
   }
 
+  /** A continuation must meet the same planted band, not merely share a node. */
+  public static boolean cyclePlantingContinues(Mesh mesh,Mesh other,boolean first,int side){
+    var a=first?mesh.first():mesh.last();var la=RoadProfile.layout(mesh,a);
+    double width=RoadStreetscape.separatorWidth(mesh.settings().options());
+    if(width<=0||la.cycleWidth()<=0)return false;
+    for(boolean nextFirst:new boolean[]{true,false}){
+      var b=nextFirst?other.first():other.last();
+      if(a.center().distance(b.center())>.01)continue;
+      var outward=a.left().left().mul(first?1:-1);var inward=b.left().left().mul(nextFirst?-1:1);
+      if(outward.dot(inward)<.999)continue;
+      int nextSide=a.left().dot(b.left())>=0?side:-side;var lb=RoadProfile.layout(other,b);
+      var decor=other.settings().options().streetscape();
+      if(lb.cycleWidth()<=0||decor.separator()!=RoadStreetscape.Separator.GREEN||decor.parking()
+          ||Arrays.stream(lb.outsideSides()).noneMatch(v->v==nextSide)
+          ||other.settings().structure()==Structure.TUNNEL||RoadsideBypass.crossing(other,b.distance(),nextSide)
+          ||RoadStreetscape.cut(other,b,nextSide)||RoadStreetscape.raised(other,b,nextSide))continue;
+      double nextWidth=RoadStreetscape.separatorWidth(other.settings().options());
+      if(Math.abs(width-nextWidth)>.01)continue;
+      if(a.at(la.outer(side)+side*width/2,0).distance(b.at(lb.outer(nextSide)+nextSide*nextWidth/2,0))<.02)return true;
+    }
+    return false;
+  }
+
   /** Taper each connected bicycle planter run, including a crossing mouth. */
   private static void cyclePlanting(Mesh mesh,Ground ground,List<Part> out){
     double separation=RoadStreetscape.separatorWidth(mesh.settings().options());if(separation<=0)return;
@@ -934,10 +967,12 @@ public final class RoadStructures {
         if(l.cycleWidth()<=0||java.util.Arrays.stream(l.outsideSides()).noneMatch(v->v==side)||RoadsideBypass.crossing(mesh,mid,side)||bridgeAt(mesh,at,ground,side)||RoadStreetscape.cut(mesh,at,side)||ground.joined(center)||ground.furnitureClear(center))continue;
         if(!runs.isEmpty()&&Math.abs(runs.get(runs.size()-1)[1]-d)<1e-7)runs.get(runs.size()-1)[1]=end;else runs.add(new double[]{d,end});
       }
+      boolean continuesStart=plantingContinues(mesh,true,true,side)||ground.cyclePlantingContinues(mesh,true,side);
+      boolean continuesEnd=plantingContinues(mesh,false,true,side)||ground.cyclePlantingContinues(mesh,false,side);
       for(var run:runs){double fade=Math.min(6,(run[1]-run[0])/2);
         for(double d=run[0];d<run[1]-1e-7;){double step=d-run[0]>=fade&&run[1]-d>fade+2?2:.5;double end=Math.min(run[1],d+step);var a=sample(mesh,d);var b=sample(mesh,end);
-          boolean openStart=run[0]<1e-7&&plantingContinues(mesh,true,true,side);
-          boolean openEnd=Math.abs(run[1]-mesh.length())<1e-7&&plantingContinues(mesh,false,true,side);
+          boolean openStart=run[0]<1e-7&&continuesStart;
+          boolean openEnd=Math.abs(run[1]-mesh.length())<1e-7&&continuesEnd;
           double fa=Settings.smooth(Math.min(1,Math.min(openStart?fade:d-run[0],openEnd?fade:run[1]-d)/fade));
           double fb=Settings.smooth(Math.min(1,Math.min(openStart?fade:end-run[0],openEnd?fade:run[1]-end)/fade));
           cyclePlanter(out,a,b,side,RoadProfile.layout(mesh,a).outer(side),RoadProfile.layout(mesh,b).outer(side),separation,fa,fb);
@@ -1024,7 +1059,7 @@ public final class RoadStructures {
     for(var access:mesh.settings().options().lanePoints().access())
       for(var gap:access.gaps())if(gap.at(distance))return false;
     V center=at.at(RoadProfile.layout(mesh,at).medianCenter(),0);
-    return !ground.joined(center) && !ground.furnitureClear(center);
+    return LaneDeck.present(mesh,at,RoadProfile.layout(mesh,at).medianCenter(),0)&&!ground.medianClear(center);
   }
 
   /** Trim furniture at the actual stop/pad boundary instead of dropping a whole 2m tile. */

@@ -61,6 +61,10 @@ public final class InterchangePlanner {
     return new Node[] {anchors[0], anchors[1], anchors[2], new Node(d, anchors[2].yaw(), 0)};
   }
 
+  public enum TrumpetStyle {
+    A("主路定向左转"), B("主路左转回环");
+    public final String label; TrumpetStyle(String label){this.label=label;}
+  }
   public record Options(
       Preset preset,
       boolean leftTraffic,
@@ -73,7 +77,10 @@ public final class InterchangePlanner {
       boolean adjustEndpoints,
       boolean allowShrink,
       double maxLowering,
-      int junctionAxis, int loopMask, boolean allowAbove, boolean flatConnector, double connectorHeight, DoubleTrumpetToll.Config toll) {
+      int junctionAxis, int loopMask, boolean allowAbove, boolean flatConnector, double connectorHeight, DoubleTrumpetToll.Config toll, TrumpetStyle trumpetStyle) {
+    public Options(Preset preset,boolean leftTraffic,int lanes,double transition,double radius,double clearance,int upper,double rampWidth,boolean adjustEndpoints,boolean allowShrink,double maxLowering,int junctionAxis,int loopMask,boolean allowAbove,boolean flatConnector,double connectorHeight,DoubleTrumpetToll.Config toll){
+      this(preset,leftTraffic,lanes,transition,radius,clearance,upper,rampWidth,adjustEndpoints,allowShrink,maxLowering,junctionAxis,loopMask,allowAbove,flatConnector,connectorHeight,toll,TrumpetStyle.A);
+    }
     public Options(Preset preset,boolean leftTraffic,int lanes,double transition,double radius,double clearance,int upper,double rampWidth,boolean adjustEndpoints,boolean allowShrink,double maxLowering,int junctionAxis,int loopMask,boolean allowAbove,boolean flatConnector,double connectorHeight){
       this(preset,leftTraffic,lanes,transition,radius,clearance,upper,rampWidth,adjustEndpoints,allowShrink,maxLowering,junctionAxis,loopMask,allowAbove,flatConnector,connectorHeight,DoubleTrumpetToll.Config.OFF);
     }
@@ -145,7 +152,7 @@ public final class InterchangePlanner {
           rampWidth,
           value,
           allowShrink,
-          maxLowering, junctionAxis, loopMask,allowAbove,flatConnector,connectorHeight,toll);
+          maxLowering, junctionAxis, loopMask,allowAbove,flatConnector,connectorHeight,toll,trumpetStyle);
     }
 
     public Options shrink(boolean value) {
@@ -160,29 +167,31 @@ public final class InterchangePlanner {
           rampWidth,
           adjustEndpoints || value,
           value,
-          maxLowering, junctionAxis, loopMask,allowAbove,flatConnector,connectorHeight,toll);
+          maxLowering, junctionAxis, loopMask,allowAbove,flatConnector,connectorHeight,toll,trumpetStyle);
     }
 
     public Options lowering(double value) {
       return new Options(preset, leftTraffic, lanes, transition, radius, clearance, upper,
-          rampWidth, adjustEndpoints, allowShrink, value, junctionAxis, loopMask,allowAbove,flatConnector,connectorHeight,toll);
+          rampWidth, adjustEndpoints, allowShrink, value, junctionAxis, loopMask,allowAbove,flatConnector,connectorHeight,toll,trumpetStyle);
     }
 
     public Options junction(int axis) {
       return new Options(preset,leftTraffic,lanes,transition,radius,clearance,upper,
-          rampWidth,adjustEndpoints,allowShrink,maxLowering,axis,loopMask,allowAbove,flatConnector,connectorHeight,toll);
+          rampWidth,adjustEndpoints,allowShrink,maxLowering,axis,loopMask,allowAbove,flatConnector,connectorHeight,toll,trumpetStyle);
     }
 
-    public Options loops(int mask){return new Options(preset,leftTraffic,lanes,transition,radius,clearance,upper,rampWidth,adjustEndpoints,allowShrink,maxLowering,junctionAxis,mask,allowAbove,flatConnector,connectorHeight,toll);}
+    public Options loops(int mask){return new Options(preset,leftTraffic,lanes,transition,radius,clearance,upper,rampWidth,adjustEndpoints,allowShrink,maxLowering,junctionAxis,mask,allowAbove,flatConnector,connectorHeight,toll,trumpetStyle);}
     public boolean aboveAvailable(){return preset==Preset.TURBINE||preset==Preset.HYBRID;}
-    public Options above(boolean value){return new Options(preset,leftTraffic,lanes,transition,radius,clearance,upper,rampWidth,adjustEndpoints,allowShrink,maxLowering,junctionAxis,loopMask,value,flatConnector,connectorHeight,toll);}
-    public Options connector(boolean flat,double height){return new Options(preset,leftTraffic,lanes,transition,radius,clearance,upper,rampWidth,adjustEndpoints,allowShrink,maxLowering,junctionAxis,loopMask,allowAbove,flat,height,toll);}
+    public Options above(boolean value){return new Options(preset,leftTraffic,lanes,transition,radius,clearance,upper,rampWidth,adjustEndpoints,allowShrink,maxLowering,junctionAxis,loopMask,value,flatConnector,connectorHeight,toll,trumpetStyle);}
+    public Options connector(boolean flat,double height){return new Options(preset,leftTraffic,lanes,transition,radius,clearance,upper,rampWidth,adjustEndpoints,allowShrink,maxLowering,junctionAxis,loopMask,allowAbove,flat,height,toll,trumpetStyle);}
 
-    public Options toll(DoubleTrumpetToll.Config value){return new Options(preset,leftTraffic,lanes,transition,radius,clearance,upper,rampWidth,adjustEndpoints,allowShrink,maxLowering,junctionAxis,loopMask,allowAbove,flatConnector,connectorHeight,value);}
+    public Options toll(DoubleTrumpetToll.Config value){return new Options(preset,leftTraffic,lanes,transition,radius,clearance,upper,rampWidth,adjustEndpoints,allowShrink,maxLowering,junctionAxis,loopMask,allowAbove,flatConnector,connectorHeight,value,trumpetStyle);}
 
     public static final Options DEFAULT = new Options(Preset.CLOVERLEAF, false, 1, 96, 20, 5, 2);
 
+    public Options trumpet(TrumpetStyle style){return new Options(preset,leftTraffic,lanes,transition,radius,clearance,upper,rampWidth,adjustEndpoints,allowShrink,maxLowering,junctionAxis,loopMask,allowAbove,flatConnector,connectorHeight,toll,style);}
     public Options {
+      trumpetStyle=trumpetStyle==null?TrumpetStyle.A:trumpetStyle;
       toll=toll==null?DoubleTrumpetToll.Config.OFF:toll;
       if(preset!=Preset.DOUBLE_TRUMPET)toll=DoubleTrumpetToll.Config.OFF;
       allowAbove=allowAbove&&(preset==Preset.TURBINE||preset==Preset.HYBRID);
@@ -337,7 +346,13 @@ public final class InterchangePlanner {
     if(nodes.length>=5)return MultiInterchange.plan(nodes,new Settings[]{a,b,b},options);
     if(options.preset().multi())throw new IllegalArgumentException("五、六向布局需要对应数量的端点");
     if (options.adjustEndpoints) return InterchangeFit.fit(nodes, a, b, options,conformance);
-    if(options.preset==Preset.DOUBLE_TRUMPET)return DoubleTrumpetPlanner.plan(nodes,a,b,options);
+    if(options.preset==Preset.DOUBLE_TRUMPET){
+      var plan=DoubleTrumpetPlanner.plan(nodes,a,b,options);
+      if(conformance==null)return plan;
+      var legs=plan.legs().stream().map(l->new Leg(l.name(),l.from(),l.to(),CurvedRoadPlans.map(l.mesh(),conformance))).toList();
+      CurvedRoadPlans.validate(legs,options);
+      return new Plan(legs,plan.movements(),legs.stream().filter(l->l.mesh().settings().style().ramp()).mapToDouble(l->RoadRibbon.minRadius(l.mesh())).min().orElse(options.radius()),plan.highest(),plan.center(),plan.anchors());
+    }
     IllegalArgumentException first = null;
     // Adapt the continuous curve to leaf crossings and the available descent distance.
     // Every candidate still runs the complete radius, grade and clearance validation.
@@ -359,7 +374,6 @@ public final class InterchangePlanner {
         return new Plan(result.legs, result.movements, result.minRadius, result.highest,
             result.center, List.copyOf(Arrays.asList(nodes)));
       } catch (IllegalArgumentException error) {
-        if (Boolean.getBoolean("sr.curveDebug")) System.err.println(options.preset+" curve="+curve+" "+error.getMessage());
         if (first == null) first = error;
         // Direct-curve tension changes right turns only. Do not repeat an identical
         // failing left turn nine times before trying a wider central bend.
@@ -491,7 +505,7 @@ public final class InterchangePlanner {
             !right
                 && (options.preset == Preset.CLOVERLEAF
                     || options.preset == Preset.HYBRID && (options.loopMask & (1<<from)) != 0
-                    || options.preset == Preset.TRUMPET && from == 1);
+                    || options.preset == Preset.TRUMPET && (options.trumpetStyle==TrumpetStyle.A?from==1:to==1));
         routes.add(route(from, to, right, leaf));
       }
     if(conformance!=null){
@@ -500,7 +514,8 @@ public final class InterchangePlanner {
       for(int i=0;i<roads.size();i++){RoadPlanningBudget.check();var leg=roads.get(i);for(Sample sample:leg.mesh().samples())checkBounds(sample.center());roads.set(i,new Leg(leg.name(),leg.from(),leg.to(),CurvedRoadPlans.map(leg.mesh(),conformance)));}
       for(Route route:routes){RoadPlanningBudget.check();for(V p:route.points)checkBounds(p);route.points=route.points.stream().map(p->{RoadPlanningBudget.check();return conformance.apply(p);}).toList();}
       for(Route route:routes){RoadPlanningBudget.check();double radius=RoadRibbon.minRadius(horizontal(route));
-        if(radius+.1<options.radius){String message=String.format(Locale.ROOT,"%s 实际转弯半径 %.1f 格，要求 %.1f 格",route.name,radius,options.radius);
+        if(radius+.1<options.radius){
+          String message=String.format(Locale.ROOT,"%s 实际转弯半径 %.1f 格，要求 %.1f 格",route.name,radius,options.radius);
           if(options.preset==Preset.STACK&&route.priority==2)throw new CornerRadiusFailure(message);
           throw new IllegalArgumentException(message);}}
     }
@@ -820,6 +835,7 @@ public final class InterchangePlanner {
       }
     }
     if(options.preset==Preset.DIAMOND||options.preset==Preset.SPUI)unifiedServiceJunctions();
+    conformService();
     validateService();
     return finish(8);
   }
@@ -1065,8 +1081,15 @@ public final class InterchangePlanner {
         roads.add(
             new Leg("环道 " + arm + (exit ? " 汇出" : " 汇入"), exit ? arm : -1, exit ? -1 : arm, mesh));
       }
+    conformService();
     validateService();
     return finish(8);
+  }
+
+  private void conformService(){
+    if(conformance==null)return;
+    for(var leg:roads)for(var sample:leg.mesh().samples())checkBounds(sample.center());
+    var mapped=CurvedRoadPlans.mapLegs(roads,conformance);roads.clear();roads.addAll(mapped);
   }
 
   /** Flat junctions are intentional. Every overlap during a climb must still meet clearance. */
@@ -1107,7 +1130,7 @@ public final class InterchangePlanner {
 
   private Plan finish(int movements) {
     for (Leg road : roads) RoadGrades.validate(road.mesh());
-    for (Leg road : roads)
+    if(conformance==null)for (Leg road : roads)
       for (Sample sample : road.mesh.samples()) {
         V p = local(sample.center());
         double pad = Math.max(main[0].width(), main[1].width());
@@ -1150,14 +1173,29 @@ public final class InterchangePlanner {
       sa = Math.min(sa, shortest * .94);
       sb = Math.min(sb, shortest * .94);
     }
+    if(options.preset==Preset.TRUMPET&&!right&&!leaf){
+      // Each mainline tail uses its own available run. The short terminal stem
+      // crosses the host separately and must not cap the outer merge distance.
+      // Extra distant pavement is a continuation, not extra curve handle length.
+      double station=lead+3*(loopRadius+width+1)+width/2+.5;
+      sa=Math.min(lengths[from]-8,station);
+      sb=Math.min(lengths[to]-8,station);
+    }
     V centerA, centerB;
-    if (leaf) {
+    if (leaf && options.preset != Preset.TRUMPET) {
       double station = Math.max(oa, ob) + loopRadius;
       centerA = di.mul(station - lead);
       centerB = dj.mul(-(station - lead));
     } else {
       centerA = ARMS[from].mul(sa);
       centerB = ARMS[to].mul(sb);
+    }
+    if(leaf&&options.preset==Preset.TRUMPET){
+      // Merge the loop beside its circular tangency, not at the remote host
+      // endpoint: a remote tail would cut back across the paired bridge.
+      double stem=width/2+.5;
+      if(from==1)centerB=ARMS[to].mul(lead-loopRadius-stem);
+      else centerA=ARMS[from].mul(lead-loopRadius-stem);
     }
     V fwa = direction(di), fwb = direction(dj), wa = world(centerA), wb = world(centerB);
     double atA = attachment(ia), atB = attachment(ib);
@@ -1198,7 +1236,46 @@ public final class InterchangePlanner {
     V tangentA = fwa.add(fwa.left().mul(handed * slopeA)).horizontalUnit();
     V tangentB = fwb.sub(fwb.left().mul(handed * slopeB)).horizontalUnit();
     List<V> middle;
-    if (leaf) {
+    if (options.preset==Preset.TRUMPET&&!right) {
+      // Both left-turn movements share the same narrow crossing corridor.
+      // The loop and its outer directional ramp diverge only beyond the main
+      // road, as in a conventional trumpet, instead of independent flyovers.
+      double far=detachedOffset(0)+loopRadius;
+      V stemDirection=direction(new V(0,0,1));
+      V crossing=world(new V(0,0,far));
+      V stemA=crossing.add(stemDirection.left().mul(handed*(width/2+.5)));
+      V stemB=crossing.sub(stemDirection.left().mul(handed*(width/2+.5)));
+      middle=new ArrayList<>();
+      if(terminalA){
+        middle.addAll(curve(List.of(new Knot(aa,fwa),new Knot(stemA,fwa))));
+        if(leaf){
+          var loop=new RoadLoop(stemA,bb,fwa,tangentB,loopRadius,!options.leftTraffic);
+          int count=(int)Math.ceil(loop.length()/.45);for(int k=1;k<=count;k++)middle.add(loop.point(k/(double)count));
+        }else{
+          double outer=loopRadius+width+1;
+          V c=stemA.add(fwa.left().mul(-handed*outer));
+          var bend=trumpetOuterBend(c,stemA,fwa,outer);
+          middle.addAll(bend.subList(1,bend.size()));
+          V tip=bend.get(bend.size()-1);
+          var turn=trumpetTail(bb,tangentB.mul(-1),tip,trumpetBendTangent(c,stemA,fwa).mul(-1),fwb.left().mul(handed),tip.sub(c).horizontalUnit(),Math.max(options.radius(),outer*.6));
+          Collections.reverse(turn);middle.addAll(turn.subList(1,turn.size()));
+        }
+      }else{
+        if(leaf){
+          var loop=new RoadLoop(aa,stemB,tangentA,fwb,loopRadius,!options.leftTraffic);
+          int count=(int)Math.ceil(loop.length()/.45);for(int k=0;k<=count;k++)middle.add(loop.point(k/(double)count));
+        }else {
+          double outer=loopRadius+width+1;
+          V c=stemB.add(fwb.left().mul(-handed*outer));
+          var bend=trumpetOuterBend(c,stemB,fwb.mul(-1),outer);
+          V approachTangent=trumpetBendTangent(c,stemB,fwb.mul(-1)).mul(-1);
+          Collections.reverse(bend);
+          middle.addAll(trumpetTail(aa,tangentA,bend.get(0),approachTangent,fwa.left().mul(handed),bend.get(0).sub(c).horizontalUnit(),Math.max(options.radius(),outer*.6)));
+          middle.addAll(bend.subList(1,bend.size()));
+        }
+        var tail=curve(List.of(new Knot(stemB,fwb),new Knot(bb,fwb)));middle.addAll(tail.subList(1,tail.size()));
+      }
+    } else if (leaf) {
       RoadLoop loop = new RoadLoop(loopA, loopB, tangentA, tangentB, loopRadius, !options.leftTraffic);
       int n = (int) Math.ceil(loop.length() / .45);
       middle = new ArrayList<>();
@@ -1271,6 +1348,46 @@ public final class InterchangePlanner {
         right ? 0 : leaf ? 1 : 2);
   }
 
+  // Follow the outside of the loop before making the reverse bend to the host.
+  // The reverse bend stays beyond the tangent plane where it leaves the loop.
+  private static final double TRUMPET_OUTER_SWEEP=Math.PI;
+  private static List<V> trumpetTail(V a,V ta,V b,V tb,V outside,V radial,double minimumRadius){
+    double chord=b.sub(a).horizontalLength(),h1=chord,h2=chord;
+    double loopRoom=a.sub(b).dot(radial),roadRoom=b.sub(a).dot(outside);
+    if(loopRoom<4||roadRoom<4)throw new IllegalArgumentException("喇叭外侧匝道空间不足，请扩大主路端点范围");
+    // The complete Bezier hull remains outside the carriageway and the loop.
+    // Fit each handle separately: a long host approach and short loop approach
+    // cannot use the same chord-based handle without an overshoot or tight elbow.
+    if(ta.dot(radial)<-1e-8)h1=Math.min(h1,loopRoom*.98/-ta.dot(radial));
+    if(tb.dot(outside)>1e-8)h2=Math.min(h2,roadRoom*.98/tb.dot(outside));
+    V c=null,d=null;double best=0;
+    for(double f:new double[]{.25,.4,.55,.7,.85,1})for(double g:new double[]{.25,.4,.55,.7,.85,1}){
+      RoadPlanningBudget.check();V first=a.add(ta.mul(h1*f)),last=b.sub(tb.mul(h2*g));double radius=Double.POSITIVE_INFINITY;
+      for(int i=0;i<=64;i++){
+        double t=i/64.,u=1-t;V velocity=first.sub(a).mul(3*u*u).add(last.sub(first).mul(6*u*t)).add(b.sub(last).mul(3*t*t));
+        V acceleration=last.sub(first.mul(2)).add(a).mul(6*u).add(b.sub(last.mul(2)).add(first).mul(6*t));
+        double cross=Math.abs(velocity.x()*acceleration.z()-velocity.z()*acceleration.x()),speed=velocity.horizontalLength();
+        if(speed<1e-6){radius=0;break;}if(cross>1e-9)radius=Math.min(radius,speed*speed*speed/cross);
+      }
+      if(radius>best){best=radius;c=first;d=last;}
+    }
+    if(best<minimumRadius)throw new IllegalArgumentException("喇叭外侧过渡半径不足，请拉开主路端点");
+    var path=new ArrayList<V>();int count=(int)Math.ceil(chord*1.65/.4);
+    for(int i=0;i<=count;i++){if((i&63)==0)RoadPlanningBudget.check();double t=i/(double)count,u=1-t;path.add(a.mul(u*u*u).add(c.mul(3*u*u*t)).add(d.mul(3*u*t*t)).add(b.mul(t*t*t)));}
+    return path;
+  }
+  private static V trumpetBendTangent(V center,V start,V tangent){
+    return start.sub(center).horizontalUnit().mul(-Math.sin(TRUMPET_OUTER_SWEEP)).add(tangent.mul(Math.cos(TRUMPET_OUTER_SWEEP)));
+  }
+  private static List<V> trumpetOuterBend(V center,V start,V tangent,double radius){
+    var points=new ArrayList<V>();V radial=start.sub(center).horizontalUnit();
+    int count=(int)Math.ceil(TRUMPET_OUTER_SWEEP*radius/.4);
+    for(int i=0;i<=count;i++){
+      double angle=TRUMPET_OUTER_SWEEP*i/count;
+      points.add(center.add(radial.mul(radius*Math.cos(angle))).add(tangent.mul(radius*Math.sin(angle))));
+    }
+    return points;
+  }
   private double padding(int axis) {
     if (!main[axis].options().routing().fitEdges()) return 0;
     V d = axis == 0 ? u : v, p = nodes[axis == 0 ? 0 : 2].position();
@@ -1474,7 +1591,13 @@ public final class InterchangePlanner {
       if(i==0)return direction(ARMS[r.from].mul(-1));
       if(i==r.points.size()-1)return direction(ARMS[r.to]);
     }
-    return r.points.get(Math.min(r.points.size()-1,i+1)).sub(r.points.get(Math.max(0,i-1))).horizontalUnit();
+    if(i==0)return r.points.get(1).sub(r.points.get(0)).horizontalUnit();
+    if(i==r.points.size()-1)return r.points.get(i).sub(r.points.get(i-1)).horizontalUnit();
+    V before=r.points.get(i).sub(r.points.get(i-1)),after=r.points.get(i+1).sub(r.points.get(i));
+    double first=before.horizontalLength(),last=after.horizontalLength();
+    // Unequal circle/Bezier sampling intervals need a nonuniform derivative;
+    // an unweighted chord invents a curvature spike at their smooth seam.
+    return before.mul(last/first).add(after.mul(first/last)).horizontalUnit();
   }
   private Sample routeSample(Route r, int i) {
     V before = r.points.get(Math.max(0, i - 1)),

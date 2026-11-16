@@ -30,7 +30,8 @@ public final class LaneAdditions {
   public static List<Integer> slots(Mesh mesh){return slots(mesh,mesh.first().distance());}
   public static List<Integer> slots(Mesh mesh,double station){
     var raw=LaneSections.reference(mesh);var out=new ArrayList<Integer>();
-    for(int i=0;i<RoadProfile.layout(raw,RoadStructures.sample(raw,station)).catalog().lanes();i++)out.add(i);
+    int lanes=RoadProfile.layout(raw,RoadStructures.sample(raw,station)).catalog().lanes();
+    for(int i=0;i<lanes;i++)out.add(i);
     for(var a:raw.settings().options().lanePoints().additions())out.add(a.slot());
     return out;
   }

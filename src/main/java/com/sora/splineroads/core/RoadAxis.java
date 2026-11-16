@@ -34,9 +34,13 @@ public final class RoadAxis {
   public V at(double d){
     if(d<0)return points.get(0).add(tangents[0].mul(d));
     if(d>length())return points.get(points.size()-1).add(tangents[tangents.length-1].mul(d-length()));
-    int i=segment(d);double t=(d-stations[i])/(stations[i+1]-stations[i]);return points.get(i).add(points.get(i+1).sub(points.get(i)).mul(t));
+    int i=segment(d);double span=stations[i+1]-stations[i],t=(d-stations[i])/span,t2=t*t,t3=t2*t;
+    V result=points.get(i).mul(2*t3-3*t2+1).add(tangents[i].mul(span*(t3-2*t2+t)))
+        .add(points.get(i+1).mul(-2*t3+3*t2)).add(tangents[i+1].mul(span*(t3-t2)));
+    return new V(result.x(),points.get(i).y()+(points.get(i+1).y()-points.get(i).y())*t,result.z());
   }
-  public V tangent(double d){int i=segment(d);double t=Math.max(0,Math.min(1,(d-stations[i])/(stations[i+1]-stations[i])));return tangents[i].mul(1-t).add(tangents[i+1].mul(t)).horizontalUnit();}
+  public V tangent(double d){int i=segment(d);double span=stations[i+1]-stations[i],t=Math.max(0,Math.min(1,(d-stations[i])/span)),t2=t*t;
+    return points.get(i).sub(points.get(i+1)).mul(6*t2-6*t).add(tangents[i].mul(span*(3*t2-4*t+1))).add(tangents[i+1].mul(span*(3*t2-2*t))).horizontalUnit();}
   public double project(V point){
     double best=Double.POSITIVE_INFINITY,result=0;
     for(int i=0;i<points.size()-1;i++){
@@ -45,7 +49,9 @@ public final class RoadAxis {
       t=Math.max(i==0?-4096:0,Math.min(i==points.size()-2?span+4096:span,t));
       double error=point.sub(a.add(delta.horizontalUnit().mul(t))).horizontalLength();
       if(error<best){best=error;result=stations[i]+t;}
-    }return result;
+    }
+    for(int i=0;i<6;i++){double step=point.sub(at(result)).dot(tangent(result));result=Math.max(-4096,Math.min(length()+4096,result+step));if(Math.abs(step)<1e-7)break;}
+    return result;
   }
   public RoadAxis slice(double start,double end,double yShift){
     if(end-start<1)throw new IllegalArgumentException("主路剩余长度不足");

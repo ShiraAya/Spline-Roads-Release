@@ -95,7 +95,7 @@ public final class InterchangeTool extends Item {
         return InteractionResult.CONSUME;
       }
       BlockPos p = RoadTool.endpointAtHit(context);
-      if (level.getBlockEntity(p) instanceof NodeEntity) {
+      if (RoadTool.visibleEndpoint(level,p)) {
         RoadData.requireNode(level, p, player);
         String dimension = level.dimension().location().toString();
         long[] selected =
@@ -131,10 +131,10 @@ public final class InterchangeTool extends Item {
 
   private void edit(ServerPlayer player) {
     var hit = RoadTool.pick(player);
-    if (hit == null || hit.record.assembly() == null)
+    UUID group=group(player,hit);
+    if (group == null)
       throw new IllegalArgumentException("选择 " + selection() + "；或右键已有立交");
     var data=RoadData.get(player.serverLevel());
-    UUID group=InterchangeJunctions.parent(data,hit.record.assembly());
     var saved = data.interchanges.get(group);
     if (saved == null) throw new IllegalArgumentException("立交描述已缺失，请删除残留路段后重建");
     requireDescriptor(saved);
@@ -146,6 +146,16 @@ public final class InterchangeTool extends Item {
                 player,
                 saved.getLongArray("Points"),
                 group)));
+  }
+
+  private static UUID group(ServerPlayer player,RoadIndex.Built road){
+    if(road==null)return null;var data=RoadData.get(player.serverLevel());
+    if(road.record.assembly()!=null){var group=InterchangeJunctions.parent(data,road.record.assembly());if(data.interchanges.containsKey(group))return group;}
+    var eye=player.getEyePosition();var look=player.getLookAngle();
+    var origin=new com.sora.splineroads.core.RoadGeometry.V(eye.x,eye.y,eye.z);
+    var direction=new com.sora.splineroads.core.RoadGeometry.V(look.x,look.y,look.z);
+    double distance=com.sora.splineroads.core.RoadQueries.ray(road.mesh,origin,direction,Math.nextUp(256.0));
+    return ParallelSpui.groupAt(data,road.record,Double.isFinite(distance)?origin.add(direction.mul(distance)):origin);
   }
 
   @Override
@@ -167,7 +177,7 @@ public final class InterchangeTool extends Item {
       try {
         var player = (ServerPlayer) who;
         var hit = RoadTool.pick(player);
-        if (hit != null && hit.record.assembly() != null) edit(player);
+        if (group(player,hit) != null) edit(player);
         else {
           long[] points = stack.getOrCreateTag().getLongArray("Points");
           if (points.length == arms

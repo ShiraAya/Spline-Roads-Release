@@ -8,8 +8,6 @@ import java.util.*;
 /** Keep the original terrain in a partially cut edge voxel, capped BELOW every
  * local road surface. Neither the deck nor its paint/width is extended. */
 final class GroundTerrainJoin {
- // Generated edge fill below a quarter block is a loose paper-thin sheet.
- static final double MIN_CAP=.25;
  // Footway edge caps may be thin; the fill codec supports positive caps down to .01.
  static boolean usable(double cap){return cap>=.01&&cap<1;}
  static double cap(BlockPos p,BlockState original,List<RoadIndex.Built> nearby){
@@ -50,8 +48,14 @@ final class GroundTerrainJoin {
   }
   // Flush grass, stone and other built-in infill materials already render
   // through the ordinary collider. Only unsupported materials need a fill entity.
-  if(edge&&cap>=.998-1e-7&&RoadBlocks.Fill.of(original)!=RoadBlocks.Fill.NONE)return 1;
-  return edge&&cap<.999?(cap>=(footway?.01:MIN_CAP)?cap:0):1;
+  if(!edge||cap>=.998-1e-7)return 1;
+  // Asphalt edge cells accept the highest half/full block that fits beneath
+  // the deck. Sidewalks have their own fitted contact along the slab.
+  return footway?(cap>=.01?cap:0):roadEdgeCap(cap+.002);
+ }
+ static double roadEdgeCap(double available){
+  if(available>=1-1e-7)return 1;
+  return available>=.5-1e-7?.5:0;
  }
  private GroundTerrainJoin(){}
 }

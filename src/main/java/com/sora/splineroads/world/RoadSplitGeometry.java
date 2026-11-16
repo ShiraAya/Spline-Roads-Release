@@ -132,6 +132,35 @@ public final class RoadSplitGeometry {
     int caps=(from==0?road.endCaps()&1:0)|(to==mesh.length()?road.endCaps()&2:0);
     return new RoadRecord(id,road.owner(),a,b,start,end,s,road.automatic(),road.clearance(),parts,caps,road.buildVersion(),road.assembly(),rawSlice.mesh().samples(),(road.furniturePhase()==null?RoadFurniture.Phase.DEFAULT:road.furniturePhase()).shift(from),null,null,fragment);
   }
+  static RoadRecord repairCrowdedSupports(RoadRecord road){
+    var fragment=road.fragment();
+    if(fragment==null||fragment.supports().isEmpty()
+        ||road.settings().options().infrastructure().bridge()!=RoadInfrastructure.Bridge.STANDARD)return road;
+    var mesh=road.mesh();
+    record Shaft(Part part,double station,double offset){}
+    var shafts=fragment.supports().stream().filter(p->p.pier()&&p.height()>1&&p.model().isEmpty()).map(p->{
+      var q=RoadQueries.horizontal(mesh,p.a());
+      return new Shaft(p,q.sample().distance(),q.lateral());
+    }).sorted(Comparator.comparingDouble(Shaft::station)).toList();
+    var remove=new HashSet<Part>();
+    for(int i=0;i<shafts.size();){
+      int end=i+1;double station=shafts.get(i).station();
+      while(end<shafts.size()&&shafts.get(end).station()-station<.75)end++;
+      var row=shafts.subList(i,end);i=end;
+      if(row.size()<3||RoadSupports.bearing(mesh,station,1.125).size()!=1)continue;
+      var keep=row.stream().min(Comparator.comparingDouble(p->Math.abs(p.offset()))).orElseThrow();
+      var bounds=box(keep.part());
+      var extras=row.stream().filter(s->s!=keep).map(s->box(s.part())).toList();
+      for(var part:fragment.supports()){
+        var candidate=box(part);
+        if(!touches(candidate,bounds)&&extras.stream().anyMatch(b->touches(candidate,b)))remove.add(part);
+      }
+    }
+    if(remove.isEmpty())return road;
+    var supports=fragment.supports().stream().filter(p->!remove.contains(p)).toList();
+    return road.fragment(new RoadSlicing.Fragment(fragment.source(),fragment.origin(),fragment.total(),fragment.connection(),
+        fragment.applied(),fragment.geometry(),supports,fragment.curveAnchors()));
+  }
   static List<Part> supports(Mesh mesh,List<Part> parts){
     var candidates=parts.stream().filter(p->p.material()==Material.CONCRETE&&p.model().isEmpty()&&(p.pier()||Math.abs(horizontal(mesh,p.a())-horizontal(mesh,p.b()))<=Math.max(3,p.width()*1.5))&&supportBelowDeck(mesh,p)).toList();
     var shafts=candidates.stream().filter(p->p.pier()&&p.height()>1).toList();var out=new ArrayList<Part>();

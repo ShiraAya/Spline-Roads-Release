@@ -20,7 +20,7 @@ public final class YJunctionTool extends Item {
     if(c.getPlayer() instanceof ServerPlayer p)try(var work=RoadWorkChunks.open(p.serverLevel())){
       var d=RoadData.get(p.serverLevel());BlockPos pos=RoadTool.endpointAtHit(c);var tag=c.getItemInHand().getOrCreateTag();
       if(p.isShiftKeyDown()){tag.remove("Points");p.displayClientMessage(Component.literal("Y 字选点已清空"),true);return InteractionResult.CONSUME;}
-      if(p.serverLevel().getBlockEntity(pos) instanceof NodeEntity){
+      if(RoadTool.visibleEndpoint(p.serverLevel(),pos)){
         RoadData.requireNode(p.serverLevel(),pos,p);String dim=p.level().dimension().location().toString();long[] old=dim.equals(tag.getString("Dimension"))?tag.getLongArray("Points"):new long[0];if(old.length>=3)old=new long[0];for(long k:old)if(k==pos.asLong())throw new IllegalArgumentException("请选择不同的端点");
         long[] next=Arrays.copyOf(old,old.length+1);next[old.length]=pos.asLong();tag.putLongArray("Points",next);tag.putString("Dimension",dim);
         if(next.length==3)RoadNetwork.open(p,payload(p.serverLevel(),p,next,null));else p.displayClientMessage(Component.literal("已选 "+(char)('A'+old.length)+"；接着选择 "+(char)('A'+next.length)+"（A 双向，B 出向，C 入向）"),true);

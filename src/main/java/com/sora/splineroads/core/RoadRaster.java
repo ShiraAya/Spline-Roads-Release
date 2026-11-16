@@ -27,8 +27,8 @@ public final class RoadRaster {
   public static final class Local {
     private record Segment(V l, V r, V ll, V rr, double thickness) {}
 
-    private final Map<Long, List<Segment>> decks = new HashMap<>();
-    private final Map<Long, List<RoadStructures.Part>> furniture = new HashMap<>();
+    private final Map<Long, List<Segment>> decks = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private final Map<Long, List<RoadStructures.Part>> furniture = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     private final int resolution;
     public final int segmentCount;
 
@@ -113,6 +113,11 @@ public final class RoadRaster {
 
     /** Narrow-phase structural columns for sidewalk headroom; never rasterizes a whole road. */
     public Map<Cell,List<Box>> structureColumn(int x,int z,java.util.function.Predicate<RoadStructures.Part> match) {
+      return structureColumn(x,z,Integer.MIN_VALUE,Integer.MAX_VALUE,match);
+    }
+
+    /** Same boxes restricted to [minimumY, maximumY), for local headroom queries. */
+    public Map<Cell,List<Box>> structureColumn(int x,int z,int minimumY,int maximumY,java.util.function.Predicate<RoadStructures.Part> match) {
       Map<Cell,List<Box>> result=new HashMap<>();
       for(var part:furniture.getOrDefault(key(Math.floorDiv(x,4),Math.floorDiv(z,4)),List.of())) {
         if(!match.test(part))continue;
@@ -121,7 +126,7 @@ public final class RoadRaster {
             ||z+1<=Math.min(part.a().z(),part.b().z())-extent||z>=Math.max(part.a().z(),part.b().z())+extent)continue;
         int low=(int)Math.floor(Math.min(part.a().y(),part.b().y())-part.verticalFrame());
         int high=(int)Math.ceil(Math.max(part.a().y(),part.b().y())+part.height()+part.verticalFrame());
-        for(int y=low;y<high;y++) {
+        for(int y=Math.max(low,minimumY);y<Math.min(high,maximumY);y++) {
           Cell cell=new Cell(x,y,z);
           structures(List.of(part),cell).forEach((c,boxes)->result.computeIfAbsent(c,k->new ArrayList<>()).addAll(boxes));
         }
@@ -145,6 +150,11 @@ public final class RoadRaster {
       double top=Double.POSITIVE_INFINITY;
       for(var part:furniture.getOrDefault(key(Math.floorDiv(cell.x(),4),Math.floorDiv(cell.z(),4)),List.of())){
         if(!match.test(part))continue;var face=part.top();
+        double lowY=Double.POSITIVE_INFINITY,highY=Double.NEGATIVE_INFINITY;
+        for(var vertex:face){lowY=Math.min(lowY,vertex.y());highY=Math.max(highY,vertex.y());}
+        // Clipping interpolates heights inside this range. A conservative margin
+        // preserves boundary contacts while avoiding unrelated elevation layers.
+        if(lowY>cell.y()+1+1e-6||highY<cell.y()-1e-6)continue;
         for(int i=1;i<face.size()-1;i++){
           var clipped=RoadSurface.intersect(List.of(face.get(0),face.get(i),face.get(i+1)),square);
           if(clipped.isEmpty())continue;double low=clipped.stream().mapToDouble(V::y).min().orElseThrow();
@@ -376,17 +386,26 @@ public final class RoadRaster {
       z1 = Math.min(z1, (only.z() + 1) * resolution - 1);
     }
     if (x0 > x1 || z0 > z1) return;
-    // A triangle clipped by a rectangle has at most seven vertices. Reuse two arrays per
+    // A triangle clipped by a rectangle has at most seven vertices. Reuse arrays per
     // triangle instead of allocating four lists and many vectors for every 1/8-block tile.
-    double[] poly = new double[36], scratch = new double[36];
-    for (int x = x0; x <= x1; x++)
-      for (int z = z0; z <= z1; z++) {
-        poly[0]=a.x();poly[1]=a.y();poly[2]=a.z();
-        poly[3]=b.x();poly[4]=b.y();poly[5]=b.z();
-        poly[6]=c.x();poly[7]=c.y();poly[8]=c.z();
-        int n=clip(poly,9,scratch,0,x*step,true);
-        n=clip(scratch,n,poly,0,(x+1)*step,false);
-        n=clip(poly,n,scratch,2,z*step,true);
+    double[] poly = new double[36], scratch = new double[36], column=new double[36];
+    for (int x = x0; x <= x1; x++) {
+      poly[0]=a.x();poly[1]=a.y();poly[2]=a.z();
+      poly[3]=b.x();poly[4]=b.y();poly[5]=b.z();
+      poly[6]=c.x();poly[7]=c.y();poly[8]=c.z();
+      int width=clip(poly,9,scratch,0,x*step,true);
+      width=clip(scratch,width,column,0,(x+1)*step,false);
+      if(width<9)continue;
+      // A diagonal ribbon's rectangular bounds can contain mostly empty tiles.
+      // The clipped X column gives a conservative Z interval. Keep an extra
+      // tile at both ends for floating boundary slivers, then run the original
+      // exact Z clipping/area test on every remaining tile.
+      double columnLow=Double.POSITIVE_INFINITY,columnHigh=Double.NEGATIVE_INFINITY;
+      for(int i=2;i<width;i+=3){columnLow=Math.min(columnLow,column[i]);columnHigh=Math.max(columnHigh,column[i]);}
+      int fromZ=Math.max(z0,(int)Math.floor(columnLow*resolution)-1);
+      int toZ=Math.min(z1,(int)Math.ceil(columnHigh*resolution));
+      for (int z = fromZ; z <= toZ; z++) {
+        int n=clip(column,width,scratch,2,z*step,true);
         n=clip(scratch,n,poly,2,(z+1)*step,false);
         if(n<9||area(poly,n)<1e-11)continue;
         double min=Double.MAX_VALUE,max=-Double.MAX_VALUE;
@@ -403,6 +422,7 @@ public final class RoadRaster {
         }
         list.add(next);
       }
+    }
   }
 
   private static final Comparator<Box> ROW_ORDER = (a,b) -> {

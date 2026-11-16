@@ -71,7 +71,10 @@ public final class RoadSplitter {
       double left=station,right=station;for(var r:draft.roads())if(r.junction()==null){if(r.id().equals(first.id()))left=RoadSplitGeometry.station(road.mesh(),r.mesh().last().center());else if(r.id().equals(second.id()))right=RoadSplitGeometry.station(road.mesh(),r.mesh().first().center());}
       RoadSplitGeometry.requireClear(pair.protection(),left,right);RoadSplitGeometry.requireClear(occupied,left,right);
       for(var r:draft.roads())replacement.put(r.id(),r);streets.put(first.id(),first);streets.put(second.id(),second);for(var c:draft.centers())junctions.put(c.getUUID("Id"),c);
-      for(var r:draft.roads())for(var old:data.index.roads.values())if(!old.record.id().equals(road.id())&&!replacement.containsKey(old.record.id())&&RoadIndex.overlapXZ(r.mesh(),old.mesh,1))Interchanges.checkExternal(r.mesh(),old.mesh,null);
+      // The two retained halves can contain a valid remote ramp mouth. Preserve
+      // only pavement already inside the original road, as ordinary road edits
+      // do; the new junction pieces still receive an unconditional clearance check.
+      for(var r:draft.roads())for(var old:data.index.roads.values())if(!old.record.id().equals(road.id())&&!replacement.containsKey(old.record.id())&&RoadIndex.overlapXZ(r.mesh(),old.mesh,1))checkExternal(road,r,old.mesh);
     }
     var owners=new HashMap<Integer,UUID>();for(var r:List.of(first,second))for(int slot:RoadGantry.slots(r.mesh()))owners.put(slot,r.id());
     for(var state:data.smartSigns.road(road.id()))if(!owners.containsKey(state.key().slot()))throw new IllegalArgumentException("原标牌缺少可迁移的龙门架站位");
@@ -90,6 +93,7 @@ public final class RoadSplitter {
     data.commitSplit(level,player,plan.prepared(),()->{
     plan.streets().apply(data.streets);plan.junctions().apply(data.junctions);plan.interchanges().apply(data.interchanges);data.smartSigns.splitKeys(plan.original().id(),plan.signOwners());
   });}
+  static void checkExternal(RoadRecord original,RoadRecord proposed,Mesh existing){Interchanges.checkExternal(proposed.mesh(),existing,proposed.junction()==null?original.mesh():null);}
   private static RoadRecord assembly(RoadRecord r,UUID group){return new RoadRecord(r.id(),r.owner(),r.a(),r.b(),r.start(),r.end(),r.settings(),r.automatic(),r.clearance(),r.structures(),r.endCaps(),r.buildVersion(),group,r.alignment(),r.furniturePhase(),r.junction(),r.toll(),r.fragment());}
   private static LanePoints.Ref ref(LanePoints.Ref ref,UUID source,UUID second,Set<UUID> points){return source.equals(ref.road())&&points.contains(ref.point())?LanePoints.Ref.lane(second,ref.point()):ref;}
   /** Map the saved path station, never reproject its laterally offset median marker. */

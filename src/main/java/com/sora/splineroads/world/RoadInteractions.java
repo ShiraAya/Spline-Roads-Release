@@ -33,12 +33,17 @@ final class RoadInteractions {
       var host=Map.of(b.record.id(),b.record);var ids=Set.of(b.record.id());
       double begin=source?a.mesh.samples().get(LaneRamps.contactEnd(a.mesh,host,ids,true)).distance():-1;
       double end=target?a.mesh.samples().get(LaneRamps.contactEnd(a.mesh,host,ids,false)).distance():a.mesh.length()+1;
+      boolean replanSupport=false;
       for(var part:b.record.structures())for(var contact:RoadClearance.structureContacts(part,a.mesh,4.25))if(contact.blocked()
-          &&!(source&&contact.to()<=begin+.01||target&&contact.from()>=end-.01))
+          &&!(source&&contact.to()<=begin+.01||target&&contact.from()>=end-.01)){
+        // Generated, unfixed interchange piers are derived from road clearance.
+        // Enlist their owner for full replanning; authored/fixed fittings still veto.
+        if(b.record.assembly()!=null&&b.record.fragment()==null&&part.pier()&&part.material()==Material.CONCRETE){replanSupport=true;continue;}
         throw new IllegalArgumentException(String.format(Locale.ROOT,"新道路与已有匝道设施冲突；冲突道路 %s，构件 %s，坐标 %.2f %.2f %.2f；已保留原匝道",b.record.id(),part.material(),part.a().x(),part.a().y(),part.a().z()));
+      }
       // The joined ramp must rebuild its rails against the new paved mouth.
       // Keeping its old furniture after exempting the throat leaves a real fence.
-      return source||target;
+      return source||target||replanSupport;
     }
     // A connector edit must refresh its host's boundary too. Same-height hosts
     // without cycle lanes otherwise retain saved rails through the new merge.

@@ -31,7 +31,9 @@ final class TunnelTerrainSpace {
       double air=Math.max(4.25,RoadInfrastructure.clearance(road.record.settings()));
       if(RoadClearance.structureInvades(cube,road.mesh,air)&&!RoadClearance.belowSurface(cube,road.mesh,1e-7))return false;
       var cell=new RoadRaster.Cell(p.getX(),p.getY(),p.getZ());
-      for(var e:road.prepareCollision().structureColumn(p.getX(),p.getZ(),RoadsideBypass::walkway).entrySet())
+      // A box top is inside its unit cell. Only these four rows can overlap
+      // the 2.1-block headroom band tested below; other elevation layers cannot.
+      for(var e:road.prepareCollision().structureColumn(p.getX(),p.getZ(),p.getY()-3,p.getY()+1,RoadsideBypass::walkway).entrySet())
         for(var box:e.getValue()){
           double top=e.getKey().y()+box.y1();
           if(p.getY()+1>top+1e-7&&p.getY()<top+2.1)return false;

@@ -50,7 +50,7 @@ public final class RoadBlocks {
     return false;
   }
   static boolean gantryCell(RoadIndex.Built road,com.sora.splineroads.core.RoadRaster.Cell cell){
-    var parts=road.record.structures().stream().filter(part->part.material()==com.sora.splineroads.core.RoadStructures.Material.GANTRY_FRAME).toList();
+    var parts=road.gantryFrames;
     return !parts.isEmpty()&&!com.sora.splineroads.core.RoadRaster.structures(parts,cell).isEmpty();
   }
   public static Function<Level, RoadIndex> clientIndex = l -> null;
@@ -223,6 +223,7 @@ public final class RoadBlocks {
 
   public static class Node extends BaseEntityBlock {
     private static final VoxelShape MARKER = Block.box(3, 0, 3, 13, 2, 13);
+    private static final VoxelShape JUNCTION_MARKER=Block.box(3,0,3,13,28,13);
 
     public Node() {
       super(
@@ -251,7 +252,12 @@ public final class RoadBlocks {
               && entity.getEntity() instanceof LivingEntity who
               && (RoadTool.showsNodes(who.getMainHandItem())
                   || RoadTool.showsNodes(who.getOffhandItem()));
-      return holding ? Shapes.or(MARKER, getCollisionShape(s, w, p, c)) : Shapes.empty();
+      if(!holding)return Shapes.empty();
+      if(w.getBlockEntity(p) instanceof NodeEntity node&&!node.visibleMarker())
+        return getCollisionShape(s,w,p,c);
+      var marker=w.getBlockEntity(p) instanceof NodeEntity node&&node.junctionSource!=null
+          ?JUNCTION_MARKER.move(node.offsetX,node.offsetY,node.offsetZ):MARKER;
+      return Shapes.or(marker,getCollisionShape(s,w,p,c));
     }
 
     @Override
