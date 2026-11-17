@@ -1,7 +1,0 @@
-package com.sora.splineroads.world;
-import java.util.*;import com.sora.splineroads.core.*;import net.minecraft.core.*;
-public class Followup211Seams{public static void main(String[]args)throws Exception{
-System.setProperty("inspection.world","work/feedback-211-nov15/client/saves/sr211-followup/data/splineroads.dat");var d=Followup211Inspection.load();var g=d.interchanges.get(UUID.fromString("54526339-ef86-49ab-9dc3-afc53de4272e"));System.out.println("nodes="+g.get("Nodes")+" planning="+g.get("PlanningNodes")+" virtual="+g.getBoolean("VirtualRange"));
-var input=g.copy();if(input.getBoolean("VirtualRange"))input.put("Nodes",input.get("PlanningNodes").copy());ContinuousReclaim.refresh(d,input);input.getCompound("Options").putString("TrumpetStyle","B");var plan=Interchanges.plan(input);System.out.println("TARGETS "+plan.anchors());int n=0;
-for(long pt:g.getLongArray("Points")){var at=ContinuousRoads.physicalEnd(input,n,plan.anchors().get(n));n++;System.out.println("END "+n+" "+at);for(UUID id:d.index.atNode(at)){var r=d.index.roads.get(id).record;System.out.println(id+" group="+r.assembly()+" eligible="+RoadContinuity.eligible(r.mesh())+" style="+r.settings().style()+" a="+r.start()+" b="+r.end());}}
-}}

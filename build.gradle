@@ -11,34 +11,6 @@ base { archivesName = 'splineroads' }
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
 
-sourceSets {
-    validation {
-        java.setSrcDirs(['src/validation/java'])
-        compileClasspath += main.output + main.compileClasspath
-        runtimeClasspath += output + compileClasspath + main.runtimeClasspath
-    }
-    gameTest {
-        java.setSrcDirs(['src/gametest/java'])
-        resources.setSrcDirs(['src/gametest/resources'])
-        compileClasspath += main.output + main.compileClasspath
-        runtimeClasspath = output + main.output + main.runtimeClasspath
-    }
-}
-
-tasks.register('validateFeedback', JavaExec) {
-    group = 'verification'
-    dependsOn validationClasses
-    classpath = sourceSets.validation.runtimeClasspath
-    mainClass = project.findProperty('validationMain') ?: 'com.sora.splineroads.world.RoadIndexConcurrencyValidation'
-    jvmArgs '-Xmx2G', '-XX:ActiveProcessorCount=2'
-}
-
-tasks.register('writeValidationClasspath') {
-    doLast {
-        file('build/validation-classpath.txt').text = sourceSets.validation.runtimeClasspath.asPath
-    }
-}
-
 minecraft {
     mappings channel: 'official', version: '1.20.1'
     copyIdeResources = true
@@ -52,91 +24,8 @@ minecraft {
             }
             mods { splineroads { source sourceSets.main } }
         }
-        client {
-            if (project.hasProperty('feedback211Visual')) {
-                mods { splineroads { source sourceSets.gameTest } }
-                property 'road.feedback211Visual', 'true'
-                if (project.hasProperty('roadFeedback211Resume')) property 'road.feedback211Resume', project.property('roadFeedback211Resume')
-                args '--width', '1440', '--height', '900'
-                jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
-            }
-            if (project.hasProperty('feedback204TerrainProbe')) {
-                mods { splineroads { source sourceSets.gameTest } }
-                property 'road.feedback204TerrainProbe', 'true'
-                property 'road.feedback204ProbeWorld', project.property('roadFeedback204ProbeWorld')
-                args '--width', '1280', '--height', '800'
-                jvmArgs '-Xmx4G', '-XX:ActiveProcessorCount=2'
-            }
-            if (project.hasProperty('interchange204SequenceVisual')) {
-                mods { splineroads { source sourceSets.gameTest } }
-                property 'road.interchange204SequenceVisual', 'true'
-                property 'road.interchange204SequenceOutput', 'feedback204/sequence'
-                if (project.hasProperty('roadInterchange204ReviewWorld')) {
-                    property 'road.interchange204ReviewWorld', project.property('roadInterchange204ReviewWorld')
-                }
-                args '--width', '1280', '--height', '800'
-                jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=2'
-            }
-            if (project.hasProperty('feedback204Visual')) {
-                mods { splineroads { source sourceSets.gameTest } }
-                property 'road.feedback204Visual', 'true'
-                property 'road.feedback204Snapshot', file(project.property('roadFeedback204Snapshot')).absolutePath
-                property 'road.feedback204Output', 'feedback204'
-                args '--width', '1280', '--height', '800'
-                jvmArgs '-Xmx4G', '-XX:ActiveProcessorCount=2'
-            }
-            if (project.hasProperty('sidewalk203Visual')) {
-                mods { splineroads { source sourceSets.gameTest } }
-                property 'road.sidewalk203Visual', 'true'
-                args '--width', '1280', '--height', '800'
-                jvmArgs '-Xmx4G', '-XX:ActiveProcessorCount=2'
-            }
-            if (project.hasProperty('interchange202Visual')) {
-                mods { splineroads { source sourceSets.gameTest } }
-                property 'road.interchange202Visual', 'true'
-                property 'road.interchange202Snapshot', file(project.property('roadInterchange202Snapshot')).absolutePath
-                args '--width', '1280', '--height', '800'
-                jvmArgs '-Xmx4G', '-XX:ActiveProcessorCount=2'
-            }
-            if (project.hasProperty('stack201Visual')) {
-                mods { splineroads { source sourceSets.gameTest } }
-                property 'road.stack201Visual', 'true'
-                args '--width', '1280', '--height', '800'
-                jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=2'
-            }
-            if (project.hasProperty('geometry201Visual')) {
-                mods { splineroads { source sourceSets.gameTest } }
-                property 'road.geometry201Visual', 'true'
-                args '--width', '1280', '--height', '800'
-                jvmArgs '-Xmx4G', '-XX:ActiveProcessorCount=2'
-            }
-            if (project.hasProperty('planner201Interchange')) {
-                mods { splineroads { source sourceSets.gameTest } }
-                property 'road.planner201Interchange', 'true'
-                args '--width', '1280', '--height', '800'
-                jvmArgs '-Xmx4G', '-XX:ActiveProcessorCount=2'
-            }
-            if (project.hasProperty('audit201Visual')) {
-                mods { splineroads { source sourceSets.gameTest } }
-                property 'road.audit201Visual', 'true'
-                args '--width', '1280', '--height', '800'
-                jvmArgs '-Xmx4G', '-XX:ActiveProcessorCount=2'
-            }
-            if (project.hasProperty('planner201Cache')) {
-                mods { splineroads { source sourceSets.gameTest } }
-                property 'road.planner201Cache', 'true'
-                args '--width', '1280', '--height', '800'
-                jvmArgs '-Xmx4G', '-XX:ActiveProcessorCount=2'
-            }
-        }
+        client {}
         server { args '--nogui' }
-        gameTestServer {
-            if (project.hasProperty('roadFeedback204Snapshot')) property 'splineroads.feedback204Snapshot', file(project.property('roadFeedback204Snapshot')).absolutePath
-            if (project.hasProperty('roadEbiliseFixture')) property 'road.ebiliseFixture', file(project.property('roadEbiliseFixture')).absolutePath
-            mods { splineroads { source sourceSets.gameTest } }
-            property 'forge.enabledGameTestNamespaces', project.findProperty('roadTestNamespaces') ?: 'splineroads_201'
-            jvmArgs '-Xms256m', '-Xmx4G', '-XX:ActiveProcessorCount=2'
-        }
     }
 }
 
