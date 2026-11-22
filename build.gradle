@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.sora.splineroads'
-version = '2.1.2-fix2'
+version = '2.1.2-fix3'
 base { archivesName = 'splineroads' }
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
@@ -60,6 +60,11 @@ minecraft {
             mods { splineroads { source sourceSets.main } }
         }
         client {
+            if (project.hasProperty('feedbackFix3Client')) {
+                mods { splineroads { source sourceSets.gameTest } }
+                property 'road.feedbackFix3Client', 'true'
+                jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
+            }
             if (project.hasProperty('feedbackFix2Client')) {
                 mods { splineroads { source sourceSets.gameTest } }
                 property 'road.feedbackFix2Client', 'true'
@@ -76,6 +81,12 @@ minecraft {
         }
         server {
             args '--nogui'
+            if (project.hasProperty('feedbackFix3')) {
+                mods { splineroads { source sourceSets.gameTest } }
+                property 'road.feedbackFix3', 'true'
+                if (project.hasProperty('feedbackFix3Safety')) property 'road.feedbackFix3Safety', 'true'
+                jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
+            }
             if (project.hasProperty('feedbackFix2')) {
                 mods { splineroads { source sourceSets.gameTest } }
                 property 'road.feedbackFix2', 'true'

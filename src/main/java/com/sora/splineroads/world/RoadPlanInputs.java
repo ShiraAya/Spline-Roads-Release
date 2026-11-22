@@ -29,26 +29,27 @@ final class RoadPlanInputs implements AutoCloseable {
    * between ticks. The accumulated read set remains exact across all steps. */
   RoadPlanInputs resume(){previous=CURRENT.get();CURRENT.set(this);probes=new it.unimi.dsi.fastutil.longs.LongOpenHashSet();return this;}
   static BlockState state(ServerLevel level,BlockPos pos){
-    var state=level.getBlockState(pos);var scope=CURRENT.get();
+    var state=RoadBuildWorld.state(level,pos);var scope=CURRENT.get();
     if(scope!=null&&scope.recording&&scope.level==level&&scope.probes.add(pos.asLong())){
       // Save the actual states, not hashes: different terrain cannot alias a valid plan.
       for(int dx=-1;dx<=1;dx++)for(int dy=-1;dy<=1;dy++)for(int dz=-1;dz<=1;dz++){
         var p=pos.offset(dx,dy,dz);
         // putIfAbsent still evaluated getBlockState for every overlapping
         // neighbor. Read each cell once per synchronous planning scope.
-        if(!level.isOutsideBuildHeight(p)&&!scope.states.containsKey(p.asLong()))
-          {if(scope.states.size()>=4_000_000)throw new IllegalArgumentException("预览地形读取量过大，请分段施工");scope.states.put(p.asLong(),p.equals(pos)?state:level.getBlockState(p));}
+        if(!RoadBuildWorld.outside(level,p)&&!scope.states.containsKey(p.asLong()))
+          {if(scope.states.size()>=4_000_000)throw new IllegalArgumentException("预览地形读取量过大，请分段施工");scope.states.put(p.asLong(),p.equals(pos)?state:RoadBuildWorld.state(level,p));}
       }
     }
     return state;
   }
   static BlockEntity node(ServerLevel level,BlockPos pos){
-    var entity=level.getBlockEntity(pos);var scope=CURRENT.get();
+    var entity=RoadBuildWorld.entity(level,pos);var scope=CURRENT.get();
     if(scope!=null&&scope.recording&&scope.level==level&&!scope.nodes.containsKey(pos.asLong()))
       scope.nodes.put(pos.asLong(),entity==null?null:entity.saveWithFullMetadata());
     return entity;
   }
   static int height(ServerLevel level,int x,int z){
+    var build=RoadBuildWorld.current();if(build!=null)return build.height(x,z);
     int height=level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE,x,z);
     var scope=CURRENT.get();if(scope!=null&&scope.recording&&scope.level==level)scope.heights.putIfAbsent(BlockPos.asLong(x,0,z),height);
     return height;
@@ -65,12 +66,12 @@ final class RoadPlanInputs implements AutoCloseable {
       }
       for(var entry:states.entrySet()){
         RoadPlanningBudget.check();
-        var pos=BlockPos.of(entry.getKey());var now=level.getBlockState(pos);var before=entry.getValue();
+        var pos=BlockPos.of(entry.getKey());var now=RoadBuildWorld.state(level,pos);var before=entry.getValue();
         if(!equivalentTerrain(before,now))
           throw new IllegalArgumentException("预览后地形已改变："+pos.toShortString()+"，"+before+" → "+now+"；请重新预览");
       }
       for(var entry:nodes.entrySet()){
-        var entity=level.getBlockEntity(BlockPos.of(entry.getKey()));
+        var entity=RoadBuildWorld.entity(level,BlockPos.of(entry.getKey()));
         if(!Objects.equals(entry.getValue(),entity==null?null:entity.saveWithFullMetadata()))
           throw new IllegalArgumentException("预览后端点已改变，请重新预览");
       }

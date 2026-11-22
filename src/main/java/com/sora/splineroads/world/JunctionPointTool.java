@@ -15,10 +15,10 @@ public final class JunctionPointTool extends Item {
   public JunctionPointTool(){super(new Properties().stacksTo(1));}
   static UUID source(RoadRecord r){return r.fragment()==null?r.id():r.fragment().source();}
   static void requireDifferent(ServerLevel level,BlockPos a,BlockPos b){
-    if(level.getBlockEntity(a) instanceof NodeEntity x&&level.getBlockEntity(b) instanceof NodeEntity y&&x.junctionSource!=null&&x.junctionSource.equals(y.junctionSource))throw new IllegalArgumentException("请选择不同道路上的路口点");
+    if(RoadBuildWorld.entity(level,a) instanceof NodeEntity x&&RoadBuildWorld.entity(level,b) instanceof NodeEntity y&&x.junctionSource!=null&&x.junctionSource.equals(y.junctionSource))throw new IllegalArgumentException("请选择不同道路上的路口点");
   }
   static void requireDifferent(ServerLevel level,BlockPos node,RoadRecord host){
-    if(level.getBlockEntity(node) instanceof NodeEntity n&&n.junctionSource!=null&&n.junctionSource.equals(source(host)))throw new IllegalArgumentException("路口点和附属点必须位于不同道路");
+    if(RoadBuildWorld.entity(level,node) instanceof NodeEntity n&&n.junctionSource!=null&&n.junctionSource.equals(source(host)))throw new IllegalArgumentException("路口点和附属点必须位于不同道路");
   }
   static void remove(ServerLevel level, ServerPlayer player, BlockPos pos) {
     var marker = RoadData.requireNode(level, pos, player);

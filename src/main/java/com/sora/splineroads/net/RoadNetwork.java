@@ -124,7 +124,7 @@ public final class RoadNetwork {
       var header=t.copy();header.remove("ConflictRoads");send(player,header);
       var preview=t.copy();preview.putString("Type","resultPreview");send(player,preview);return;
     }
-    boolean control=Set.of("open","result","delete","batchBarrier","syncReset","cancelTransfer").contains(t.getString("Type"))
+    boolean control=Set.of("open","result","buildPending","delete","batchBarrier","syncReset","cancelTransfer").contains(t.getString("Type"))
         &&!com.sora.splineroads.client.RoadPreviewData.queued(t);
     for (var fragment : RoadWire.split(t))
       if(control)CHANNEL.send(PacketDistributor.PLAYER.with(()->player),new ControlMessage(fragment));
@@ -558,6 +558,7 @@ public final class RoadNetwork {
   }
 
   public static void broadcastRoad(ServerLevel level, RoadRecord r) {
+    if(RoadBuildJobs.worker())return;
     var built = RoadData.get(level).index.roads.get(r.id());
     if (built == null) return;
     for(ServerPlayer player:level.players())changedRoad(player,built);
@@ -576,7 +577,7 @@ public final class RoadNetwork {
     var ids=new net.minecraft.nbt.ListTag();for(UUID id:replaced){var t=new CompoundTag();t.putUUID("Id",id);ids.add(t);}packet.put("Replaced",ids);
     var signs=new net.minecraft.nbt.ListTag();var data=RoadData.get(level);RoadSnapshotCodec.write(packet,roads);
     for(var road:roads)signs.add(data.smartSigns.packet(level,road.id()));packet.put("SignPackets",signs);packet.putLong("NodePos",node.asLong());
-    if(level.getBlockEntity(node) instanceof NodeEntity marker)packet.put("Node",marker.getUpdateTag());return packet;
+    if(RoadBuildJobs.node(level,node) instanceof NodeEntity marker)packet.put("Node",marker.getUpdateTag());return packet;
   }
   public record PreparedBatch(CompoundTag packet,List<RoadWire.Fragment> fragments){}
   public static PreparedBatch prepareBatch(ServerLevel level,List<RoadRecord> roads,Set<UUID> replaced,BlockPos node){var packet=batchPacket(level,roads,replaced,node);return new PreparedBatch(packet,RoadWire.split(packet));}
@@ -609,6 +610,7 @@ public final class RoadNetwork {
     state.batch=new BatchTransfer(ids,records,signs,node,packet,prepared!=null&&old==null?RoadWire.reidentify(prepared.fragments()):null,generations,historyBytes);
   }
   public static void broadcastBatch(ServerLevel level,List<RoadRecord> roads,Set<UUID> replaced,PreparedBatch prepared){
+    if(RoadBuildJobs.worker())return;
     var data=RoadData.get(level);var ids=new LinkedHashSet<>(replaced);for(var road:roads)ids.add(road.id());
     for(var player:level.players()){
       var state=watching(player);boolean relevant=ids.stream().anyMatch(id->state.sent.containsKey(id)||state.recentlySent.containsKey(id)||state.pending.containsKey(id)||state.batch!=null&&state.batch.ids.contains(id))||roads.stream().anyMatch(r->{var built=data.index.roads.get(r.id());return built!=null&&!Collections.disjoint(built.chunks,state.chunks);});
@@ -659,6 +661,7 @@ public final class RoadNetwork {
     var packet=new CompoundTag();packet.putString("Type","delete");packet.putUUID("Id",id);packet.putString("Dimension",state.dimension);send(player,packet);
   }
   public static void broadcastDelete(ServerLevel level, UUID id) {
+    if(RoadBuildJobs.worker())return;
     for (ServerPlayer player:level.players())forget(player,watching(player),id);
   }
 
@@ -710,6 +713,8 @@ public final class RoadNetwork {
     for(UUID id:ids){var built=index.roads.get(id);if(built!=null)road(player,built.record);}
   }
   private static void act(ServerPlayer player, CompoundTag t) {
+    var action=t.getString("Action");
+    if(RoadBuildJobs.busy(player.serverLevel())&&(action.startsWith("manual")||action.startsWith("railbed")||action.equals("splitCommit"))){result(player,false,"已有道路正在计算或保存，请等待完成",t);return;}
     if(t.getString("Action").startsWith("manual")){try{String message=ManualPlanner.action(player,t);if(!message.isEmpty())result(player,true,message,t);}catch(RuntimeException failure){if(!(failure instanceof IllegalArgumentException))org.apache.logging.log4j.LogManager.getLogger("SplineRoads/planner").error("Map action failed",failure);result(player,false,failure.getMessage()==null?"地图操作失败":failure.getMessage(),t);}return;}
     if(t.getString("Action").startsWith("street"))return; // Retired planner packets cannot resume saved tasks.
     if(t.getString("Action").startsWith("railbed")){RailbedTool.action(player,t);return;}
@@ -742,6 +747,7 @@ public final class RoadNetwork {
     try {
       result(player, true, perform(player, t),t);
     } catch (RuntimeException e) {
+      if(e instanceof RoadBuildJobs.Pending)return;
       logCrossingFailure(t.getString("Action"),e);
       if(!(e instanceof IllegalArgumentException))org.apache.logging.log4j.LogManager.getLogger("SplineRoads/build").error("Road action failed: "+t.getString("Action"),e);
       result(player, false, (e instanceof IllegalArgumentException||e instanceof com.sora.splineroads.core.RoadPlanningBudget.Aborted)?(e.getMessage()==null?"道路参数无效":e.getMessage()):"建造异常已结束等待："+e.getClass().getSimpleName()+(e.getMessage()==null?"":"："+e.getMessage())+"；完整原因见 latest.log（SplineRoads/build）",t);
@@ -760,6 +766,7 @@ public final class RoadNetwork {
     return performTool(player,t);
   }
   private static String performTool(ServerPlayer player, CompoundTag t) {
+    if(RoadBuildJobs.busy(player.serverLevel()))throw new IllegalArgumentException("已有道路正在计算或保存，请等待完成");
     if(t.getString("Action").equals("tollCancelPreview")){TollTool.cancelPreview(player,t);return "";}
     long now = player.serverLevel().getGameTime();
     boolean preview=t.getString("Action").equals("elevatedAccessPreview")||t.getString("Action").equals("deletePreview")||t.getString("Action").equals("laneRampDeletePreview")||t.getString("Action").equals("tollPreview")||t.getString("Action").equals("interchangePreview")||t.getString("Action").equals("laneRampPreview");
@@ -895,19 +902,18 @@ public final class RoadNetwork {
         settings=settings.options(settings.options().sidewalk(settings.options().sidewalk().smooth(true)));
         if (settings.style().ramp()) throw new IllegalArgumentException("道路连接器仅用于普通道路和高速道路");
         var controlNodes=id==null?CurveControlNodes.validate(level,player,tool.getOrCreateTag(),settings,a,b):java.util.List.<BlockPos>of();
-        RoadRecord r = data.connect(level, player, a, b, settings, id, t.getBoolean("LevelEnds"),AutoJunctions.forced(t,"A"),AutoJunctions.forced(t,"B"),controlNodes);
-        tool.getOrCreateTag().remove(CurveControlNodes.KEY);
-        tool.getOrCreateTag().put("Settings", RoadRecord.writeSettings(com.sora.splineroads.core.RoadPreferences.fresh(settings)));
-        tool.getOrCreateTag().putInt("PreferencesVersion", 3);
-        if(ManualPlanner.ownsTool(player,tool)){
-          tool.getOrCreateTag().remove("Start");tool.getOrCreateTag().remove("CurveThrough");
-          return "道路已建成；请重新选择 A 和 B";
+        if(!t.hasUUID("PlannerSession")){
+          var requested=settings;var submittedTool=tool.getOrCreateTag().copy();
+          RoadBuildJobs.connect(level,player,a,b,settings,id,t.getBoolean("LevelEnds"),AutoJunctions.forced(t,"A"),AutoJunctions.forced(t,"B"),controlNodes).whenComplete((r,failure)->{
+            if(failure!=null){logCrossingFailure("connect",failure instanceof RuntimeException e?e:new RuntimeException(failure));result(player,false,failure.getMessage()==null?"道路计算失败，未写入世界":failure.getMessage(),t);}
+            else result(player,true,submittedTool.equals(tool.getOrCreateTag())?finishConnect(player,tool,level,data,requested,r):"道路已建成；工具选点已改变，请按当前选点继续操作",t);
+          });
+          var pending=new CompoundTag();pending.putString("Type","buildPending");RoadActionContext.echo(t,pending);send(player,pending);
+          player.displayClientMessage(Component.literal("道路正在后台计算，可继续操作；完成后会通知你。"),false);
+          throw new RoadBuildJobs.Pending();
         }
-        BlockPos next=AutoJunctions.center(data,r.a())!=null?r.a():r.b();
-        tool.getOrCreateTag().putLong("Start",next.asLong());
-        tool.getOrCreateTag().putString("Dimension", level.dimension().location().toString());
-        if(AutoJunctions.center(data,next)!=null)return "道路和路口已更新；保留中心端点，可直接选择下一方向的外侧端点";
-        return "道路已建成并自动清障；继续右键下一个端点即可续接";
+        RoadRecord r = data.connect(level, player, a, b, settings, id, t.getBoolean("LevelEnds"),AutoJunctions.forced(t,"A"),AutoJunctions.forced(t,"B"),controlNodes);
+        return finishConnect(player,tool,level,data,settings,r);
       }
       case "node" -> {
         BlockPos p = BlockPos.of(t.getLong("Pos"));
@@ -921,6 +927,20 @@ public final class RoadNetwork {
       }
       default -> throw new IllegalArgumentException("未知操作");
     }
+  }
+  private static String finishConnect(ServerPlayer player,ItemStack tool,ServerLevel level,RoadData data,com.sora.splineroads.core.RoadGeometry.Settings settings,RoadRecord r){
+        tool.getOrCreateTag().remove(CurveControlNodes.KEY);
+        tool.getOrCreateTag().put("Settings", RoadRecord.writeSettings(com.sora.splineroads.core.RoadPreferences.fresh(settings)));
+        tool.getOrCreateTag().putInt("PreferencesVersion", 3);
+        if(ManualPlanner.ownsTool(player,tool)){
+          tool.getOrCreateTag().remove("Start");tool.getOrCreateTag().remove("CurveThrough");
+          return "道路已建成；请重新选择 A 和 B";
+        }
+        BlockPos next=AutoJunctions.center(data,r.a())!=null?r.a():r.b();
+        tool.getOrCreateTag().putLong("Start",next.asLong());
+        tool.getOrCreateTag().putString("Dimension", level.dimension().location().toString());
+        if(AutoJunctions.center(data,next)!=null)return "道路和路口已更新；保留中心端点，可直接选择下一方向的外侧端点";
+        return "道路已建成并自动清障；继续右键下一个端点即可续接";
   }
 
   private static void requireGenerator(ItemStack stack, CompoundTag command, RoadData data) {

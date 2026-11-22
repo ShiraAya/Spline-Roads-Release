@@ -65,6 +65,7 @@ public final class SmartSignRoads {
   }
   /** Rekey the saved state before topology work can retire the old slot. */
   void splitKeys(UUID source,Map<Integer,UUID> owners){
+    var background=RoadBuildWorld.current();if(background!=null&&background.data==data)background.signSplits.add(new RoadBuildWorld.SignSplit(source,Map.copyOf(owners)));
     var saved=new ArrayList<>(road(source));
     for(var state:saved){UUID target=owners.get(state.key().slot());if(target==null)throw new IllegalArgumentException("分割后找不到原标牌的唯一所属龙门架");if(target.equals(source))continue;
       removeState(state.key());addState(state.rekey(new Key(target,state.key().slot(),state.key().flow())));versions.merge(target,1L,Long::sum);publish.add(target);

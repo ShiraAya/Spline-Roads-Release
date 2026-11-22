@@ -95,13 +95,14 @@ public final class RoadData extends SavedData {
   private final Map<Long,List<RoadStructures.Part>> structureRepair103=new HashMap<>();
   private final Set<UUID> supportRepair104=new LinkedHashSet<>(),attemptedSupportRepair104=new HashSet<>();
   private Set<Long> apronPlaced = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
-  private final Long2ObjectOpenHashMap<BlockState> terrainOriginal = new Long2ObjectOpenHashMap<>();
-  private final Long2ObjectOpenHashMap<BlockState> terrainFill = new Long2ObjectOpenHashMap<>();
+  private Long2ObjectOpenHashMap<BlockState> terrainOriginal = new Long2ObjectOpenHashMap<>();
+  private Long2ObjectOpenHashMap<BlockState> terrainFill = new Long2ObjectOpenHashMap<>();
   private final Map<Long, Set<UUID>> repairedChunks = new LinkedHashMap<>(128,.75f,true) {
     @Override protected boolean removeEldestEntry(Map.Entry<Long, Set<UUID>> e) { return size() > 4096; }
   };
 
   public static RoadData get(ServerLevel level) {
+    var build=RoadBuildWorld.current();if(build!=null){if(build.level!=level)throw new IllegalStateException("Build changed dimension");return build.data;}
     var storage=level.getDataStorage();var data=storage.get(RoadData::load,"splineroads");
     if(data==null){
       // DimensionDataStorage logs and returns null when a loader throws. Never
@@ -112,6 +113,48 @@ public final class RoadData extends SavedData {
       data=new RoadData();storage.set("splineroads",data);
     }
     data.owningLevel=level;return data;
+  }
+
+  /** Capture references to immutable road records and private copies of mutable
+   * ledgers. Spatial indexes/caches are created by the worker, never shared. */
+  private Runnable validateBuildInputs=()->{};
+  void validateBuildInputs(){validateBuildInputs.run();}
+  java.util.function.Supplier<RoadData> buildCopy(ServerLevel level){
+    var roads=index.roads.values().stream().map(r->r.record).toList();var logical=Map.copyOf(streets);
+    var centers=copyTags(junctions);var crossings=copyTags(interchanges);
+    var original=new Long2ObjectOpenHashMap<>(terrainOriginal);var fill=new Long2ObjectOpenHashMap<>(terrainFill);
+    var walks=new Long2ObjectOpenHashMap<>(sidewalkPlaced);var aprons=new it.unimi.dsi.fastutil.longs.LongOpenHashSet(apronPlaced);
+    var rails=railbeds.save();var signs=smartSigns.snapshot();
+    return ()->{var copy=new RoadData();copy.index.changed=id->{};copy.owningLevel=level;
+      for(var record:roads)copy.index.put(RoadIndex.Built.loading(record));
+      copy.streets.putAll(logical);copy.junctions.putAll(copyTags(centers));copy.interchanges.putAll(copyTags(crossings));
+      copy.terrainOriginal=new Long2ObjectOpenHashMap<>(original);copy.terrainFill=new Long2ObjectOpenHashMap<>(fill);copy.sidewalkPlaced=new Long2ObjectOpenHashMap<>(walks);copy.apronPlaced=new it.unimi.dsi.fastutil.longs.LongOpenHashSet(aprons);
+      copy.validateBuildInputs=()->{if(!terrainOriginal.equals(original)||!terrainFill.equals(fill)||!sidewalkPlaced.equals(walks)||!apronPlaced.equals(aprons)||!streets.equals(logical)||!junctions.equals(centers)||!interchanges.equals(crossings)||!railbeds.save().equals(rails))throw new IllegalArgumentException("计算期间道路或填土记录已改变，请重新保存");};
+      copy.railbeds.load(rails);copy.smartSigns.restore(signs);return copy;};
+  }
+  /** Main-thread publication; returns the exact metadata rollback closure. */
+  Runnable publishBuild(RoadData next,Set<UUID> changed){
+    var oldOrder=new LinkedHashMap<>(index.roads);
+    var oldRoads=new HashMap<UUID,RoadIndex.Built>();for(var id:changed)oldRoads.put(id,index.roads.get(id));
+    var oldStreets=new LinkedHashMap<>(streets);var oldJunctions=new HashMap<>(junctions);var oldInterchanges=new HashMap<>(interchanges);
+    var oldOriginal=terrainOriginal;var oldFill=terrainFill;var oldWalks=sidewalkPlaced;var oldAprons=apronPlaced;var oldSigns=smartSigns.snapshot();
+    var oldRails=railbeds.save();boolean oldDirty=isDirty();
+    Runnable rollback=()->{var listener=index.changed;index.changed=id->{};
+      try{for(var id:changed){var road=oldRoads.get(id);if(road==null)index.remove(id);else index.put(road);}
+        index.restoreOrder(oldOrder);
+        streets.clear();streets.putAll(oldStreets);junctions.clear();junctions.putAll(oldJunctions);interchanges.clear();interchanges.putAll(oldInterchanges);
+        terrainOriginal=oldOriginal;terrainFill=oldFill;sidewalkPlaced=oldWalks;apronPlaced=oldAprons;railbeds.load(oldRails);smartSigns.restore(oldSigns);setDirty(oldDirty);
+      }finally{index.changed=listener;}};
+    var callback=index.changed;index.changed=id->{};
+    try{for(var id:changed){var road=next.index.roads.get(id);if(road==null)index.remove(id);else index.put(road);}
+      streets.clear();streets.putAll(next.streets);junctions.clear();junctions.putAll(next.junctions);interchanges.clear();interchanges.putAll(next.interchanges);
+      terrainOriginal=next.terrainOriginal;terrainFill=next.terrainFill;sidewalkPlaced=next.sidewalkPlaced;apronPlaced=next.apronPlaced;
+      // Ordinary connect does not edit sign text; keep any live maintenance or
+      // text updates made while the isolated geometry was being calculated.
+      railbeds.load(next.railbeds.save());setDirty();
+    }catch(RuntimeException failure){rollback.run();throw failure;}
+    finally{index.changed=callback;}
+    return rollback;
   }
 
   public static RoadData load(CompoundTag root) {
@@ -252,7 +295,7 @@ public final class RoadData extends SavedData {
   public static NodeEntity requireNode(ServerLevel level, BlockPos pos, ServerPlayer player) {
     try (var work = RoadWorkChunks.open(level)) {
       work.node(pos);
-      if (!(level.getBlockEntity(pos) instanceof NodeEntity node))
+      if (!(RoadBuildWorld.entity(level,pos) instanceof NodeEntity node))
         throw new IllegalArgumentException("端点不存在，可能已被删除，请重新选择");
       if (player != null) {
         requireOwner(player, node.owner);
@@ -289,7 +332,7 @@ public final class RoadData extends SavedData {
   public RoadRecord connect(ServerLevel level,ServerPlayer player,BlockPos a,BlockPos b,Settings settings,UUID replace,boolean levelEnds,boolean forceA,boolean forceB,List<BlockPos> controlNodes) {
     if(replace==null){
       for(BlockPos pos:List.of(a,b))
-        if(level.getBlockEntity(pos) instanceof NodeEntity node&&!node.visibleMarker())
+        if(RoadBuildWorld.entity(level,pos) instanceof NodeEntity node&&!node.visibleMarker())
           throw new IllegalArgumentException("路口点已删除，请重新选择");
       JunctionPointTool.requireDifferent(level,a,b);
     }
@@ -335,7 +378,7 @@ public final class RoadData extends SavedData {
                   .record;
       UUID owner =
           previous == null
-              ? (player == null ? new UUID(0, 0) : player.getUUID())
+              ? RoadBuildWorld.owner(player)
               : previous.owner();
       if (previous != null) {
         if (previous.assembly() != null) throw new IllegalArgumentException("自动立交需要使用立交连接器整体编辑");
@@ -1365,14 +1408,14 @@ public final class RoadData extends SavedData {
       // logical roads and the junction groups selected above, then publish later.
       interchangesBefore=fullMetadata?copyTags(interchanges):Map.of();
       signsBefore=fullMetadata?smartSigns.snapshot():null;
-      int captured=0;for(long key:edit.touched()){if((captured++&1023)==0)com.sora.splineroads.core.RoadPlanningBudget.check();var pos=BlockPos.of(key);world.put(key,level.getBlockState(pos));var be=level.getBlockEntity(pos);if(be!=null)entities.put(key,be.saveWithFullMetadata());if(terrainOriginal.containsKey(key))original.put(key,terrainOriginal.get(key));if(terrainFill.containsKey(key))fill.put(key,terrainFill.get(key));}
+      int captured=0;for(long key:edit.touched()){if((captured++&1023)==0)com.sora.splineroads.core.RoadPlanningBudget.check();var pos=BlockPos.of(key);world.put(key,RoadBuildWorld.state(level,pos));var be=RoadBuildWorld.entity(level,pos);if(be!=null)entities.put(key,be.saveWithFullMetadata());if(terrainOriginal.containsKey(key))original.put(key,terrainOriginal.get(key));if(terrainFill.containsKey(key))fill.put(key,terrainFill.get(key));}
       // Normal shape updates can remove a plant or snow layer just above the touched soil.
       // Capture that dependent cell (including a tall plant's upper half) before
       // the first write, so a later metadata/packet failure can restore it too.
       for(long key:edit.touched()){
         var plant=BlockPos.of(key).above();if(edit.touched().contains(plant.asLong()))continue;
         for(int half=0;half<2;half++,plant=plant.above()){
-          if(level.isOutsideBuildHeight(plant))break;long plantKey=plant.asLong();var state=level.getBlockState(plant);
+          if(RoadBuildWorld.outside(level,plant))break;long plantKey=plant.asLong();var state=RoadBuildWorld.state(level,plant);
           if(!(state.getBlock() instanceof net.minecraft.world.level.block.BushBlock)
               &&!(state.getBlock() instanceof net.minecraft.world.level.block.SnowLayerBlock))break;
           world.put(plantKey,state);if(terrainOriginal.containsKey(plantKey))original.put(plantKey,terrainOriginal.get(plantKey));if(terrainFill.containsKey(plantKey))fill.put(plantKey,terrainFill.get(plantKey));
@@ -1395,10 +1438,10 @@ public final class RoadData extends SavedData {
   }
   private static void checkedSetBlock(ServerLevel level,BlockPos pos,BlockState state,int flags){
     // setBlock(false) is normal when the desired state already exists.
-    level.setBlock(pos,state,flags);requireBlockState(level,pos,state);
+    RoadBuildWorld.set(level,pos,state,flags);requireBlockState(level,pos,state);
   }
   private static void requireBlockState(ServerLevel level,BlockPos pos,BlockState state){
-    var actual=level.getBlockState(pos);
+    var actual=RoadBuildWorld.state(level,pos);
     if(!sameWrittenState(actual,state))throw new IllegalStateException("世界拒绝写入道路方块："+pos.toShortString()+" target="+state+" actual="+actual);
   }
   // Empty sections and world hooks may canonicalize vanilla cave/void air.
@@ -1419,9 +1462,15 @@ public final class RoadData extends SavedData {
   }
   private static void restoreBlocks(ServerLevel level,Map<Long,BlockState> states,
       Map<Long,CompoundTag> entities,java.util.function.Consumer<RuntimeException> failed,boolean terrainRestore){
+    var background=RoadBuildWorld.current();
+    if(background!=null){
+      states.forEach((key,state)->background.write(BlockPos.of(key),state));
+      entities.forEach((key,tag)->background.entities.put(key,net.minecraft.world.level.block.entity.BlockEntity.loadStatic(BlockPos.of(key),background.getBlockState(BlockPos.of(key)),tag.copy())));
+      return;
+    }
     var changed=new LinkedHashMap<Long,BlockState>();
     for(var entry:states.entrySet())try{
-      var pos=BlockPos.of(entry.getKey());var previous=level.getBlockState(pos);
+      var pos=BlockPos.of(entry.getKey());var previous=RoadBuildWorld.state(level,pos);
       checkedSetBlock(level,pos,entry.getValue(),net.minecraft.world.level.block.Block.UPDATE_CLIENTS|net.minecraft.world.level.block.Block.UPDATE_KNOWN_SHAPE);
       if(!previous.equals(entry.getValue()))changed.put(entry.getKey(),previous);
     }catch(RuntimeException failure){failed.accept(failure);}
@@ -1460,7 +1509,7 @@ public final class RoadData extends SavedData {
       var be=net.minecraft.world.level.block.entity.BlockEntity.loadStatic(pos,state,entry.getValue().copy());
       if(be==null||!state.hasBlockEntity()||!be.getType().isValid(state))throw new IllegalStateException("无法恢复端点/填充实体："+pos.toShortString());
       level.removeBlockEntity(pos);level.setBlockEntity(be);
-      if(level.getBlockEntity(pos)!=be||be.isRemoved()||!be.getBlockPos().equals(pos)||!be.getBlockState().equals(state))throw new IllegalStateException("无法挂接恢复的端点/填充实体："+pos.toShortString());
+      if(RoadBuildWorld.entity(level,pos)!=be||be.isRemoved()||!be.getBlockPos().equals(pos)||!be.getBlockState().equals(state))throw new IllegalStateException("无法挂接恢复的端点/填充实体："+pos.toShortString());
       be.setChanged();level.sendBlockUpdated(pos,state,state,3);
     }catch(RuntimeException failure){failed.accept(failure);}
     for(var entry:changed.entrySet())try{
@@ -1476,7 +1525,7 @@ public final class RoadData extends SavedData {
       // In particular, an upper-only plant must not be accepted as a stable restore.
       var stable=net.minecraft.world.level.block.Block.updateFromNeighbourShapes(state,level,pos);
       if(!sameWrittenState(stable,state))throw new IllegalStateException("世界拒绝写入道路方块："+pos.toShortString()+" target="+state+" supported="+stable);
-      var entity=level.getBlockEntity(pos);var tag=entities.get(entry.getKey());
+      var entity=RoadBuildWorld.entity(level,pos);var tag=entities.get(entry.getKey());
       if(tag!=null&&(entity==null||entity.isRemoved()||!entity.getBlockPos().equals(pos)||!entity.getBlockState().equals(state)
           ||!entity.getType().isValid(state)||!entity.saveWithFullMetadata().equals(tag)))throw new IllegalStateException("恢复后端点/填充实体不一致："+pos.toShortString());
       if(!state.hasBlockEntity()&&entity!=null)throw new IllegalStateException("恢复后残留方块实体："+pos.toShortString());
@@ -1989,9 +2038,9 @@ public final class RoadData extends SavedData {
       for (long key : touched) {
         com.sora.splineroads.core.RoadPlanningBudget.check();
         BlockPos p = BlockPos.of(key);
-        if (level.isOutsideBuildHeight(p) || !level.getWorldBorder().isWithinBounds(p))
+        if (RoadBuildWorld.outside(level,p) || !RoadBuildWorld.border(level).isWithinBounds(p))
           throw new IllegalArgumentException("道路超出世界高度或边界");
-        if (!level.hasChunkAt(p)) throw new IllegalArgumentException("道路区块加载失败，请稍后重试");
+        if (!RoadBuildWorld.loaded(level,p)) throw new IllegalArgumentException("道路区块加载失败，请稍后重试");
         if (player != null && !level.mayInteract(player, p))
           throw new IllegalArgumentException("道路经过受保护区域");
         BlockState state = RoadPlanInputs.state(level,p);
@@ -2038,13 +2087,13 @@ public final class RoadData extends SavedData {
         // Restored host clearance must not erase a surviving road or the user's
         // blocks while deleting. Its existing geometry is allowed to remain.
         if(deleting&&!roadBody&&!walkway)continue;
-        if(deleting&&!RoadBlocks.isCollider(state)&&(state.hasBlockEntity()||state.getDestroySpeed(level,p)<0))continue;
+        if(deleting&&!RoadBlocks.isCollider(state)&&(state.hasBlockEntity()||state.getDestroySpeed(RoadBuildWorld.blocks(level),p)<0))continue;
         BlockState target = terrainEdge?SplineRoads.FILLED_COLLIDER.get().defaultBlockState():railBody&&!ordinaryBody&&!walkway
             ? (RoadBlocks.isCollider(state)?state:SplineRoads.COLLIDER.get().defaultBlockState())
             : roadBody ? collisionState(key, state, body.get(key), sidewalks.get(key),dry.contains(key),finalByChunk.getOrDefault(new net.minecraft.world.level.ChunkPos(p).toLong(),List.of())) : walkway ? sidewalks.get(key) : dry.contains(key)?SplineRoads.TUNNEL_AIR.get().defaultBlockState():Blocks.AIR.defaultBlockState();
         var preparedFill=target.is(SplineRoads.FILLED_COLLIDER.get())
             ?RoadFillEntity.resolve(p,material,GroundTerrainJoin.cap(p,material,localRoads),localRoads):null;
-        if(state.equals(target)&&(preparedFill==null||level.getBlockEntity(p) instanceof RoadFillEntity fill&&fill.matches(preparedFill)))continue;
+        if(state.equals(target)&&(preparedFill==null||RoadBuildWorld.entity(level,p) instanceof RoadFillEntity fill&&fill.matches(preparedFill)))continue;
         RoadClearing.validate(level,p,state,state.equals(sidewalkPlaced.get(key)));
         writes.put(key, target);
         if(preparedFill!=null)fillWrites.put(key,preparedFill);
@@ -2057,7 +2106,7 @@ public final class RoadData extends SavedData {
           writes.put(key,body.containsKey(key)?collisionState(key,Blocks.AIR.defaultBlockState(),body.get(key),sidewalks.get(key),dry.contains(key),finalByChunk.getOrDefault(new net.minecraft.world.level.ChunkPos(move.from()).toLong(),List.of())):dry.contains(key)?SplineRoads.TUNNEL_AIR.get().defaultBlockState():Blocks.AIR.defaultBlockState());
           continue;
         }
-        BlockState state = level.getBlockState(move.to());
+        BlockState state = RoadBuildWorld.state(level,move.to());
         boolean movableMarker = moveSources.contains(move.to().asLong());
         boolean replacedRoad =
             RoadBlocks.isCollider(state)
@@ -2071,13 +2120,13 @@ public final class RoadData extends SavedData {
             writes.containsKey(targetKey)
                 && !RoadBlocks.isCollider(state)
                 && !state.hasBlockEntity()
-                && level.getBlockEntity(move.to()) == null
+                && RoadBuildWorld.entity(level,move.to()) == null
                 && committed.stream().anyMatch(r ->
                     r.cells.containsKey(targetKey) || r.clearanceCells.contains(targetKey));
         if (!movableMarker
             && !replacedRoad
             && !clearedByConstruction
-            && (!state.canBeReplaced() || state.hasBlockEntity() || level.getBlockEntity(move.to()) != null))
+            && (!state.canBeReplaced() || state.hasBlockEntity() || RoadBuildWorld.entity(level,move.to()) != null))
           throw new IllegalArgumentException("端点目标被占用：" + move.to().toShortString()
               + "（" + state.getBlock().getName().getString() + " / "
               + BuiltInRegistries.BLOCK.getKey(state.getBlock()) + "）");
@@ -2096,7 +2145,7 @@ public final class RoadData extends SavedData {
       var historyCells=!preview&&ManualPlannerHistory.active()?new it.unimi.dsi.fastutil.longs.LongOpenHashSet(writes.keySet()):null;
       for(long key:touched) {
         if(body.containsKey(key)||!deleting&&air.contains(key)||sidewalks.containsKey(key)||moveTargets.contains(key))continue;
-        BlockState current=level.getBlockState(BlockPos.of(key));
+        BlockState current=RoadBuildWorld.state(level,BlockPos.of(key));
         if(RoadBlocks.isCollider(current)||current.is(SplineRoads.TUNNEL_AIR.get())||current.equals(sidewalkPlaced.get(key)))changed++;
         if(historyCells!=null&&(RoadBlocks.isCollider(current)||TunnelAir.isAirSpace(current)
             ||current.equals(sidewalkPlaced.get(key))||terrainOriginal.containsKey(key)||terrainFill.containsKey(key)))historyCells.add(key);
@@ -2112,10 +2161,10 @@ public final class RoadData extends SavedData {
         ManualPlannerHistory.capture(level,historyCells);
       }
       if(player!=null){
-        for(var write:writes.entrySet()){var p=BlockPos.of(write.getKey());RoadEditProtection.check(level,player,p,level.getBlockState(p),write.getValue());}
+        for(var write:writes.entrySet()){var p=BlockPos.of(write.getKey());RoadEditProtection.check(level,player,p,RoadBuildWorld.state(level,p),write.getValue());}
         for(long key:touched){
           if(body.containsKey(key)||!deleting&&air.contains(key)||sidewalks.containsKey(key)||moveTargets.contains(key))continue;
-          var p=BlockPos.of(key);var current=level.getBlockState(p);
+          var p=BlockPos.of(key);var current=RoadBuildWorld.state(level,p);
           if(RoadBlocks.isCollider(current)||TunnelAir.isAirSpace(current)||current.equals(sidewalkPlaced.get(key)))
             RoadEditProtection.check(level,player,p,current,terrainOriginal.getOrDefault(key,terrainFill.getOrDefault(key,Blocks.AIR.defaultBlockState())));
         }
@@ -2126,11 +2175,11 @@ public final class RoadData extends SavedData {
       commitTiming.stage("rollback_snapshot");
       var callback=index.changed;if(snapshot!=null)index.changed=id->{};
       try{
-      com.sora.splineroads.core.RoadPlanningBudget.committing();
+      if(RoadBuildWorld.current()==null)com.sora.splineroads.core.RoadPlanningBudget.committing();
       // A terrain apron can already equal the ground. It still acquires ownership,
       // so save its original even when no block-state write is needed.
       for(long key:sidewalks.keySet())if(!sidewalkPlaced.containsKey(key)&&!terrainOriginal.containsKey(key)){
-        var state=level.getBlockState(BlockPos.of(key));if(!RoadBlocks.isCollider(state))terrainOriginal.put(key,state);
+        var state=RoadBuildWorld.state(level,BlockPos.of(key));if(!RoadBlocks.isCollider(state))terrainOriginal.put(key,state);
       }
       // Old railway piers used a separate restoration ledger. Hand their
       // original terrain to this atomic edit before moving/removing supports.
@@ -2158,7 +2207,7 @@ public final class RoadData extends SavedData {
       for (var entry : writes.entrySet()) {
         long key = entry.getKey();
         BlockPos p = BlockPos.of(key);
-        BlockState old = level.getBlockState(p);
+        BlockState old = RoadBuildWorld.state(level,p);
         BlockState target=entry.getValue();
         // Excavation belongs to the transaction too. Retain cleared natural solids
         // above the deck so replanning sees the original cover and retired cuts heal.
@@ -2177,16 +2226,16 @@ public final class RoadData extends SavedData {
         else terrainFill.remove(key);
         if(!exactSplit)editFault.accept("ledger");
         checkedSetBlock(level,p,entry.getValue(),2);if(exactSplit)splitFault.accept("write");else editFault.accept("write");
-        if(level.getBlockEntity(p) instanceof RoadFillEntity filled){
+        if(RoadBuildWorld.entity(level,p) instanceof RoadFillEntity filled){
           var preparedFill=fillWrites.get(key);
           if(preparedFill!=null)filled.fill(preparedFill);
-          else {var material=sidewalks.getOrDefault(key,terrainFill.getOrDefault(key,Blocks.AIR.defaultBlockState()));filled.fill(material,GroundTerrainJoin.cap(p,material,finalByChunk.getOrDefault(new net.minecraft.world.level.ChunkPos(p).toLong(),List.of())));}
+          else {var material=sidewalks.getOrDefault(key,terrainFill.getOrDefault(key,Blocks.AIR.defaultBlockState()));var nearby=finalByChunk.getOrDefault(new net.minecraft.world.level.ChunkPos(p).toLong(),List.of());filled.fill(RoadFillEntity.resolve(p,material,GroundTerrainJoin.cap(p,material,nearby),nearby));}
         }
       }
       commitTiming.stage("world_writes");
       for (var move : moves) {
         if(move.to()==null)continue;
-        if(!(level.getBlockEntity(move.to()) instanceof NodeEntity marker))throw new IllegalStateException("道路端点实体创建失败："+move.to().toShortString());
+        if(!(RoadBuildWorld.entity(level,move.to()) instanceof NodeEntity marker))throw new IllegalStateException("道路端点实体创建失败："+move.to().toShortString());
         marker.load(move.snapshot().copy());
         marker.heightExplicit = true;
         marker.apply(move.target());
@@ -2198,7 +2247,7 @@ public final class RoadData extends SavedData {
         // Net clearance belongs to every surviving road, including during deletion.
         if (body.containsKey(key) || air.contains(key) || sidewalks.containsKey(key) || moveTargets.contains(key)) continue;
         BlockPos p = BlockPos.of(key);
-        BlockState current = level.getBlockState(p);
+        BlockState current = RoadBuildWorld.state(level,p);
         BlockState fill = terrainFill.remove(key);
         BlockState original = terrainOriginal.remove(key);
         if (RoadBlocks.isCollider(current)) {
@@ -2347,12 +2396,12 @@ public final class RoadData extends SavedData {
   public boolean infill(ServerLevel level,BlockPos p,BlockState fill,ServerPlayer player) {
     if(!RoadBlocks.canInfill(level,p,fill))return false;
     if(!mayEditFill(level,p,player))return false;
-    BlockState old=level.getBlockState(p);
+    BlockState old=RoadBuildWorld.state(level,p);
     terrainFill.put(p.asLong(),fill);
     terrainOriginal.put(p.asLong(),fill);
-    level.setBlock(p,SplineRoads.FILLED_COLLIDER.get().defaultBlockState().setValue(RoadBlocks.Road.LIT,old.getValue(RoadBlocks.Road.LIT)).setValue(RoadBlocks.Road.SEALED,old.getValue(RoadBlocks.Road.SEALED)),3);
+    RoadBuildWorld.set(level,p,SplineRoads.FILLED_COLLIDER.get().defaultBlockState().setValue(RoadBlocks.Road.LIT,old.getValue(RoadBlocks.Road.LIT)).setValue(RoadBlocks.Road.SEALED,old.getValue(RoadBlocks.Road.SEALED)),3);
     var nearby=index.inChunk(new net.minecraft.world.level.ChunkPos(p).toLong()).stream().map(index.roads::get).filter(Objects::nonNull).toList();
-    ((RoadFillEntity)level.getBlockEntity(p)).fill(fill,GroundTerrainJoin.cap(p,fill,nearby));setDirty();return true;
+    ((RoadFillEntity)RoadBuildWorld.entity(level,p)).fill(fill,GroundTerrainJoin.cap(p,fill,nearby));setDirty();return true;
   }
 
   /** Filling and excavation share the authority of every road occupying this cell. */
@@ -2360,7 +2409,7 @@ public final class RoadData extends SavedData {
     if(player==null)return true;
     if(!player.mayBuild()||!level.mayInteract(player,p))return false;
     if(player.hasPermissions(2))return true;
-    var entity=level.getBlockEntity(p);
+    var entity=RoadBuildWorld.entity(level,p);
     boolean terrainEdge=entity instanceof RoadFillEntity fill&&!fill.outline().isEmpty();
     for(UUID id:index.inChunk(new net.minecraft.world.level.ChunkPos(p).toLong())){
       var road=index.roads.get(id);
@@ -2372,7 +2421,7 @@ public final class RoadData extends SavedData {
 
   /** Dig the retained terrain while leaving the independent road slab in the same block cell. */
   public boolean excavateSupport(ServerLevel level, BlockPos p, ServerPlayer player) {
-    BlockState current = level.getBlockState(p);
+    BlockState current = RoadBuildWorld.state(level,p);
     if (!RoadBlocks.isCollider(current)
         || current.getValue(RoadBlocks.Road.FILL) == RoadBlocks.Fill.NONE && !current.is(SplineRoads.FILLED_COLLIDER.get())) return false;
     if (!mayEditFill(level,p,player)) return false;
@@ -2389,10 +2438,10 @@ public final class RoadData extends SavedData {
     // admit exterior water, whereas a slab or any neighboring tunnel's air stays
     // dry. Passing no paving prevents reintroducing the material just excavated.
     if(owners.isEmpty()){
-      level.setBlock(p,Blocks.AIR.defaultBlockState(),3);setDirty();return true;
+      RoadBuildWorld.set(level,p,Blocks.AIR.defaultBlockState(),3);setDirty();return true;
     }
     var empty=collisionState(p.asLong(),current,owners,null);
-    level.setBlock(p,empty,3);
+    RoadBuildWorld.set(level,p,empty,3);
     if(empty.getValue(RoadBlocks.Road.WATERLOGGED))
       level.scheduleTick(p,net.minecraft.world.level.material.Fluids.WATER,
           net.minecraft.world.level.material.Fluids.WATER.getTickDelay(level));
@@ -2452,11 +2501,11 @@ public final class RoadData extends SavedData {
       var nearby=index.inChunk(chunk.toLong()).stream().map(index.roads::get).filter(Objects::nonNull).toList();
       for(var cell:RoadRaster.structures(revised,null).keySet()){
         if(cell.x()>>4!=chunk.x||cell.z()>>4!=chunk.z)continue;
-        var p=new BlockPos(cell.x(),cell.y(),cell.z());long key=p.asLong();var state=level.getBlockState(p);
+        var p=new BlockPos(cell.x(),cell.y(),cell.z());long key=p.asLong();var state=RoadBuildWorld.state(level,p);
         var owners=nearby.stream().filter(r->!r.boxes(p).isEmpty()).toList();
         if(owners.isEmpty()){
           releaseRetiredCell(level,p,state);
-        }else if(TunnelAir.isAirSpace(state)||RoadBlocks.isCollider(state)){level.setBlock(p,collisionState(key,state,owners),3);if(level.getBlockEntity(p) instanceof RoadFillEntity fill)fill.fill(terrainFill.getOrDefault(key,Blocks.AIR.defaultBlockState()));}
+        }else if(TunnelAir.isAirSpace(state)||RoadBlocks.isCollider(state)){RoadBuildWorld.set(level,p,collisionState(key,state,owners),3);if(RoadBuildWorld.entity(level,p) instanceof RoadFillEntity fill)fill.fill(terrainFill.getOrDefault(key,Blocks.AIR.defaultBlockState()));}
       }
       setDirty();
     }
@@ -2467,7 +2516,7 @@ public final class RoadData extends SavedData {
       for(long key:apronCells){if(!apronPlaced.contains(key))continue;var p=BlockPos.of(key);
         boolean keep=false;for(var road:nearby){if(!RoadAprons.eligible(road.mesh))continue;var q=RoadQueries.horizontal(road.mesh,new V(p.getX()+.5,p.getY(),p.getZ()+.5));if(Math.abs(q.lateral())<=q.sample().halfWidth()+1+1e-7&&Math.abs(q.sample().center().y()-(p.getY()+1))<2.01){keep=true;break;}}
         if(keep)continue;
-        var expected=sidewalkPlaced.get(key);var state=level.getBlockState(p);var fillEntity=level.getBlockEntity(p);
+        var expected=sidewalkPlaced.get(key);var state=RoadBuildWorld.state(level,p);var fillEntity=RoadBuildWorld.entity(level,p);
         boolean owned=state.equals(expected)||state.is(SplineRoads.FILLED_COLLIDER.get())&&fillEntity instanceof RoadFillEntity f&&f.fill().equals(expected);
         apronPlaced.remove(key);sidewalkPlaced.remove(key);
         var owners=nearby.stream().filter(b->!b.boxes(p).isEmpty()).toList();
@@ -2476,8 +2525,8 @@ public final class RoadData extends SavedData {
         // A surviving collider owner still needs its original terrain snapshot.
         if(!owned){if(owners.isEmpty()){terrainFill.remove(key);terrainOriginal.remove(key);}continue;}
         var original=terrainOriginal.getOrDefault(key,Blocks.AIR.defaultBlockState());
-        if(owners.isEmpty()){terrainFill.remove(key);terrainOriginal.remove(key);level.setBlock(p,original,3);}
-        else {terrainFill.put(key,original);level.setBlock(p,collisionState(key,state,owners),3);if(level.getBlockEntity(p) instanceof RoadFillEntity f)f.fill(original,GroundTerrainJoin.cap(p,original,nearby));}
+        if(owners.isEmpty()){terrainFill.remove(key);terrainOriginal.remove(key);RoadBuildWorld.set(level,p,original,3);}
+        else {terrainFill.put(key,original);RoadBuildWorld.set(level,p,collisionState(key,state,owners),3);if(RoadBuildWorld.entity(level,p) instanceof RoadFillEntity f)f.fill(original,GroundTerrainJoin.cap(p,original,nearby));}
       }setDirty();
     }
     var islands=islandRepair.remove(chunk.toLong());
@@ -2486,30 +2535,30 @@ public final class RoadData extends SavedData {
       for(UUID id:islands){var road=index.roads.get(id);if(road==null||road.record.junction()==null)continue;var spec=road.record.junction().spec();
         for(var cell:road.prepareCollision().cellsInChunk(chunk.x,chunk.z)){
           if(new V(cell.x()+.5,spec.center().y(),cell.z()+.5).sub(spec.center()).horizontalLength()>spec.islandRadius()+.75||cell.y()<Math.floor(spec.center().y())||cell.y()>Math.floor(spec.center().y()+.75))continue;
-          var p=new BlockPos(cell.x(),cell.y(),cell.z());var previous=level.getBlockState(p);if(!TunnelAir.isAirSpace(previous)&&!RoadBlocks.isCollider(previous))continue;
+          var p=new BlockPos(cell.x(),cell.y(),cell.z());var previous=RoadBuildWorld.state(level,p);if(!TunnelAir.isAirSpace(previous)&&!RoadBlocks.isCollider(previous))continue;
           var owners=nearby.stream().filter(b->!b.boxes(p).isEmpty()).toList();if(owners.isEmpty())continue;
-          level.setBlock(p,collisionState(p.asLong(),previous,owners),3);
+          RoadBuildWorld.set(level,p,collisionState(p.asLong(),previous,owners),3);
         }
       }setDirty();
     }
     var groundCells=groundJoinRepair.remove(chunk.toLong());
     if(groundCells!=null){
       var nearby=index.inChunk(chunk.toLong()).stream().map(index.roads::get).filter(Objects::nonNull).toList();
-      for(long key:groundCells){var p=BlockPos.of(key);var state=level.getBlockState(p);if(!RoadBlocks.isCollider(state)||state.is(SplineRoads.FILLED_COLLIDER.get())||state.getValue(RoadBlocks.Road.FILL)!=RoadBlocks.Fill.NONE)continue;
+      for(long key:groundCells){var p=BlockPos.of(key);var state=RoadBuildWorld.state(level,p);if(!RoadBlocks.isCollider(state)||state.is(SplineRoads.FILLED_COLLIDER.get())||state.getValue(RoadBlocks.Road.FILL)!=RoadBlocks.Fill.NONE)continue;
         var original=terrainOriginal.getOrDefault(key,Blocks.AIR.defaultBlockState());double cap=GroundTerrainJoin.cap(p,original,nearby);if(cap>=1)continue;
         var owners=nearby.stream().filter(b->!b.boxes(p).isEmpty()).toList();if(owners.isEmpty())continue;var next=collisionState(key,state,owners);
         if(!next.is(SplineRoads.FILLED_COLLIDER.get()))continue;
-        terrainFill.put(key,original);level.setBlock(p,next,3);if(level.getBlockEntity(p) instanceof RoadFillEntity filled)filled.fill(original,cap);
+        terrainFill.put(key,original);RoadBuildWorld.set(level,p,next,3);if(RoadBuildWorld.entity(level,p) instanceof RoadFillEntity filled)filled.fill(original,cap);
       }setDirty();
     }
     var retired=retiredSignsByChunk.remove(chunk.toLong());
     if(retired!=null){
       for(var cell:RoadRaster.structures(retired,null).keySet()){
         if(cell.x()>>4!=chunk.x||cell.z()>>4!=chunk.z)continue;
-        var p=new BlockPos(cell.x(),cell.y(),cell.z());long key=p.asLong();var state=level.getBlockState(p);
+        var p=new BlockPos(cell.x(),cell.y(),cell.z());long key=p.asLong();var state=RoadBuildWorld.state(level,p);
         var owners=index.inChunk(chunk.toLong()).stream().map(index.roads::get).filter(r->!r.boxes(p).isEmpty()).toList();
         if(owners.isEmpty())releaseRetiredCell(level,p,state);
-        else if(RoadBlocks.isCollider(state)){level.setBlock(p,collisionState(key,state,owners),3);if(level.getBlockEntity(p) instanceof RoadFillEntity fill)fill.fill(terrainFill.getOrDefault(key,Blocks.AIR.defaultBlockState()));}
+        else if(RoadBlocks.isCollider(state)){RoadBuildWorld.set(level,p,collisionState(key,state,owners),3);if(RoadBuildWorld.entity(level,p) instanceof RoadFillEntity fill)fill.fill(terrainFill.getOrDefault(key,Blocks.AIR.defaultBlockState()));}
       }setDirty();
     }
     // Walking is not an edit transaction. Preserve saved geometry, load no remote chunks,
@@ -2524,12 +2573,12 @@ public final class RoadData extends SavedData {
       for (var cell : built.prepareCollision().cellsInChunk(chunk.x, chunk.z)) {
         BlockPos p = new BlockPos(cell.x(),cell.y(),cell.z());
         long key = p.asLong();
-        BlockState state = level.getBlockState(p);
+        BlockState state = RoadBuildWorld.state(level,p);
         if (state.is(SplineRoads.NODE.get())
             || RoadBlocks.isCollider(state)
-            || state.getDestroySpeed(level, p) < 0 || state.hasBlockEntity()) continue;
+            || state.getDestroySpeed(RoadBuildWorld.blocks(level), p) < 0 || state.hasBlockEntity()) continue;
         var owners = index.at(key).stream().map(index.roads::get).toList();
-        level.setBlock(p, collisionState(key, state, owners), 2);
+        RoadBuildWorld.set(level,p, collisionState(key, state, owners), 2);
         setDirty();
       }
       done.add(id);

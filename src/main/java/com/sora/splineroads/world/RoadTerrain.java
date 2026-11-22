@@ -54,11 +54,11 @@ final class RoadTerrain {
       return surface;
     }
     private double solidTop(double x,double z,double deckY){
-      BlockPos key = BlockPos.containing(x, Math.min(level.getMaxBuildHeight()-1,deckY), z);
+      BlockPos key = BlockPos.containing(x, Math.min(RoadBuildWorld.max(level)-1,deckY), z);
       if(!RoadWorkChunks.terrainAvailable(level,key))return Double.NaN;
       var surfaces=terrainCache.computeIfAbsent(key,k->{
         var out=new ArrayList<AABB>();
-        int bottom=Math.max(level.getMinBuildHeight(),key.getY()-(int)RoadStructures.MAX_DROP);
+        int bottom=Math.max(RoadBuildWorld.min(level),key.getY()-(int)RoadStructures.MAX_DROP);
         int first=key.getY();
         if(terrainCache instanceof Cache indexed){
           // WORLD_SURFACE bounds real non-air blocks. Restored terrain can be
@@ -70,7 +70,7 @@ final class RoadTerrain {
         for(int y=first;y>=bottom;y--){
           RoadPlanningBudget.check();
           BlockPos p=new BlockPos(key.getX(),y,key.getZ());
-          if(!level.hasChunkAt(p))break;
+          if(!RoadBuildWorld.loaded(level,p))break;
           BlockState state=RoadPlanInputs.state(level,p);
           state=RoadFoundation.source(p.asLong(),state,
               RoadBlocks.isCollider(state)||state.is(SplineRoads.TUNNEL_AIR.get()),
@@ -81,7 +81,7 @@ final class RoadTerrain {
               ||state.is(SplineRoads.NODE.get()))continue;
           // Fluid has no collision shape, but a waterlogged solid is still a
           // bearing. Skipping every fluid-bearing state bored through riverbeds.
-          var shape=state.getCollisionShape(level,p);
+          var shape=state.getCollisionShape(RoadBuildWorld.blocks(level),p);
           for(var box:shape.toAabbs())out.add(box.move(p));
           // A full cube hides every lower surface in this column.
           if(y<key.getY()&&net.minecraft.world.level.block.Block.isShapeFullBlock(shape))break;

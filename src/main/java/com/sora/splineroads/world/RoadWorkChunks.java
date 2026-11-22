@@ -22,9 +22,12 @@ public final class RoadWorkChunks implements AutoCloseable {
 
   private final ServerLevel level;
   private final State state;
+  private final RoadBuildWorld background;
   private boolean closed;
 
   private RoadWorkChunks(ServerLevel level) {
+    background=RoadBuildWorld.current();
+    if(background!=null){this.level=level;this.state=null;return;}
     if (!level.getServer().isSameThread())
       throw new IllegalStateException("Road work must run on the server thread");
     this.level = level;
@@ -36,7 +39,7 @@ public final class RoadWorkChunks implements AutoCloseable {
     return new RoadWorkChunks(level);
   }
 
-  static Set<Long> held(ServerLevel level){var state=ACTIVE.get(level);return state==null?Set.of():Set.copyOf(state.held);}
+  static Set<Long> held(ServerLevel level){var build=RoadBuildWorld.current();if(build!=null)return Set.copyOf(build.columns.keySet());var state=ACTIVE.get(level);return state==null?Set.of():Set.copyOf(state.held);}
 
   public static int heldCount(ServerLevel level) {
     State state = ACTIVE.get(level);
@@ -46,6 +49,7 @@ public final class RoadWorkChunks implements AutoCloseable {
   /** Portal feet can lie beyond the road strip. Load only columns actually searched,
    * under the existing bounded transaction, and release them with its other tickets. */
   static boolean terrainAvailable(ServerLevel level,BlockPos pos) {
+    var build=RoadBuildWorld.current();if(build!=null){if(!build.border.isWithinBounds(pos))return false;build.request(Set.of(new ChunkPos(pos).toLong()));return true;}
     if(!level.getWorldBorder().isWithinBounds(pos))return false;
     if(level.hasChunkAt(pos))return true;
     if(!ACTIVE.containsKey(level))return false;
@@ -56,11 +60,13 @@ public final class RoadWorkChunks implements AutoCloseable {
   /** Large directional assemblies have a measured, bounded footprint beyond the
    * ordinary road budget. The outer transaction owns and releases every ticket. */
   public void multiInterchange() {
+    if(background!=null)return;
     if(closed)throw new IllegalStateException("Road work lease is closed");
     state.limit=RoadLimits.MAX_MULTI_INTERCHANGE_WORK_CHUNKS;
   }
 
   public void node(BlockPos pos) {
+    if(background!=null){if(RoadBuildWorld.outside(level,pos)||!background.border.isWithinBounds(pos))throw new IllegalArgumentException("端点超出世界高度或边界");load(Set.of(new ChunkPos(pos).toLong()));return;}
     if (level.isOutsideBuildHeight(pos) || !level.getWorldBorder().isWithinBounds(pos))
       throw new IllegalArgumentException("端点超出世界高度或边界");
     load(Set.of(new ChunkPos(pos).toLong()));
@@ -78,6 +84,7 @@ public final class RoadWorkChunks implements AutoCloseable {
   }
 
   public void load(Collection<Long> requested) {
+    if(background!=null){background.request(requested);return;}
     if (closed) throw new IllegalStateException("Road work lease is closed");
     Set<Long> extra = new LinkedHashSet<>(requested);
     extra.removeAll(state.held);
@@ -100,6 +107,7 @@ public final class RoadWorkChunks implements AutoCloseable {
 
   @Override
   public void close() {
+    if(background!=null){closed=true;return;}
     if (closed) return;
     closed = true;
     if (--state.users != 0) return;

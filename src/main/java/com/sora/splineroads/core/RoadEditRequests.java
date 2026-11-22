@@ -33,12 +33,14 @@ public final class RoadEditRequests {
   }
 
   public Request take(UUID id, long revision, String action, String target) {
+    Request value=pending(id,revision,action,target);if(value==null)return null;
+    pending=null;completed=value;return value;
+  }
+  public Request pending(UUID id,long revision,String action,String target){
     Request value = pending;
     if (value == null || !value.id().equals(id) || value.generation() != revision
         || value.generation() != generation || value.owner() != editor
         || !value.action().equals(action) || !Objects.equals(value.target(), target)) return null;
-    pending = null;
-    completed = value;
     return value;
   }
 

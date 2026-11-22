@@ -185,6 +185,14 @@ public final class ClientRoads {
   private static void receive(CompoundTag t, RoadIndex.Built decoded,List<RoadIndex.Built> batch,RoadPreviewData prepared) {
     Minecraft mc = Minecraft.getInstance();
     String type = t.getString("Type");
+    if(type.equals("buildPending")){
+      if(!t.hasUUID("ReplyId"))return;
+      var request=editRequests.pending(t.getUUID("ReplyId"),t.getLong("ReplyGeneration"),t.getString("ReplyAction"),t.getString("ReplyTarget"));
+      if(request!=null&&mc.screen==request.owner()){
+        mc.setScreen(null);preview=null;nodePreviews=List.of();RoadRenderer.previewCandidates(List.of());
+      }
+      return;
+    }
     if (type.equals("open")) {
       if(t.contains("Dimension")&&(mc.level==null||!mc.level.dimension().location().toString().equals(t.getString("Dimension"))))return;
       open(t.getCompound("Payload"),prepared);

@@ -27,6 +27,7 @@ public final class RoadFillEntity extends BlockEntity {
   private record Collision(Fill fill,VoxelShape raw,VoxelShape road,VoxelShape shape) {}
   private volatile Fill contents=new Fill(Blocks.AIR.defaultBlockState(),1,false,java.util.List.of(),java.util.List.of());
   private volatile Collision cached;
+  Fill snapshot(){return contents;}
   public java.util.List<java.util.List<com.sora.splineroads.core.RoadGeometry.V>> outline(){return contents.outline();}
   public double cap(){return contents.cap();}
   public java.util.List<com.sora.splineroads.core.RoadRaster.Box> edge(){return contents.edge();}
@@ -58,7 +59,12 @@ public final class RoadFillEntity extends BlockEntity {
   private void refresh(){
     cached=null;
     requestModelDataUpdate();
-    if(level!=null)level.sendBlockUpdated(worldPosition,getBlockState(),getBlockState(),3);
+    // This is an entity-data update with the same state on both sides. Vanilla
+    // sendBlockUpdated computes two identical dynamic collision unions solely
+    // to decide whether to invalidate mob paths. Queue the same client update
+    // directly; collision remains lazy and observes the new immutable Fill.
+    if(level instanceof net.minecraft.server.level.ServerLevel server)server.getChunkSource().blockChanged(worldPosition);
+    else if(level!=null)level.sendBlockUpdated(worldPosition,getBlockState(),getBlockState(),3);
   }
   public void fill(BlockState state){fill(state,1);}
   public boolean matches(BlockState state,double height,java.util.List<RoadIndex.Built> roads){

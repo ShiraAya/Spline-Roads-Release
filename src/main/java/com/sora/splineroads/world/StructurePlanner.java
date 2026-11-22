@@ -99,7 +99,7 @@ final class StructurePlanner {
     }
     var derived=built.record.derivedStreetscape(built.record.settings().options().streetscape().crossings(crossings).tunnels(tunnelSpans));
     if(derived!=built.record)built=built.planned(derived);
-    RoadsideBypass.validateFloor(built.mesh,crossings,level.getMinBuildHeight());
+    RoadsideBypass.validateFloor(built.mesh,crossings,RoadBuildWorld.min(level));
     double missingDepth=0;BlockPos obstruction=null;
     for(var span:crossings)if(span.delta()<0)for(double d=Math.max(0,span.start());d<=Math.min(built.mesh.length(),span.end());d+=1){
       var at=RoadStructures.sample(built.mesh,d);
@@ -107,9 +107,9 @@ final class StructurePlanner {
         double lateral=RoadsideBypass.inner(built.mesh,at,span.side())*(1-fraction)+RoadsideBypass.outer(built.mesh,at,span.side())*fraction;
         V bottom=at.at(span.side()*lateral,RoadsideBypass.SLAB-span.height(d));
         var pos=BlockPos.containing(bottom.x(),bottom.y()+1e-7,bottom.z());
-        if(level.hasChunkAt(pos)){
+        if(RoadBuildWorld.loaded(level,pos)){
           var state=RoadPlanInputs.state(level,pos);
-          if(!TunnelAir.isAirSpace(state)&&!RoadBlocks.isCollider(state)&&state.getDestroySpeed(level,pos)<0&&pos.getY()+1-bottom.y()>missingDepth){missingDepth=pos.getY()+1-bottom.y();obstruction=pos;}
+          if(!TunnelAir.isAirSpace(state)&&!RoadBlocks.isCollider(state)&&state.getDestroySpeed(RoadBuildWorld.blocks(level),pos)<0&&pos.getY()+1-bottom.y()>missingDepth){missingDepth=pos.getY()+1-bottom.y();obstruction=pos;}
         }
       }
     }

@@ -41,7 +41,7 @@ final class RailbedRoadEdits {
    var old=data.railbeds.entries.get(road.record.id());var next=new RailbedStore.Entry(road.record,old.paths,old.width,old.mode,old.options);next.original.putAll(old.original);next.written.putAll(old.written);
    var touched=cells(old.road);touched.addAll(cells(road.record));
    for(long key:touched){var pos=BlockPos.of(key);if(!road.boxes(pos).isEmpty()){
-     next.original.putIfAbsent(key,data.railbedOriginal(key));next.written.put(key,level.getBlockState(pos));
+     next.original.putIfAbsent(key,data.railbedOriginal(key));next.written.put(key,RoadBuildWorld.state(level,pos));
      if(data.index.at(key).stream().noneMatch(id->!data.index.roads.get(id).record.legacyRailway()))data.railbedOwns(key);
    }else if(!road.clearanceAt(pos)){next.original.remove(key);next.written.remove(key);}}
    data.railbeds.entries.put(road.record.id(),next);

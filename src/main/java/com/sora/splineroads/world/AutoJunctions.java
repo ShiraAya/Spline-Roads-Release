@@ -27,7 +27,7 @@ public final class AutoJunctions {
     }
     var draft=plan(roads,configs,before);var moves=new ArrayList<RoadData.NodeMove>();
     for(boolean first:new boolean[]{true,false}){var p=first?next.a():next.b();var target=first?next.start():next.end();
-      if(level.getBlockEntity(p) instanceof NodeEntity node){if(player!=null)RoadData.requireOwner(player,node.owner);if(node.constructionNode().position().distance(target.position())>.01)throw new IllegalArgumentException("接口端点在预览后移动，请重新规划");}
+      if(RoadBuildWorld.entity(level,p) instanceof NodeEntity node){if(player!=null)RoadData.requireOwner(player,node.owner);if(node.constructionNode().position().distance(target.position())>.01)throw new IllegalArgumentException("接口端点在预览后移动，请重新规划");}
       else {var tag=new CompoundTag();tag.put("Node",RoadRecord.writeNode(target));tag.putBoolean("HeightExplicit",true);tag.putUUID("Owner",next.owner());moves.add(new RoadData.NodeMove(null,p,target,tag));}
     }
     var groups=new HashSet<UUID>();for(var c:centers(before))groups.add(c.getUUID("Id"));for(var c:draft.centers())groups.add(c.getUUID("Id"));
@@ -465,7 +465,7 @@ public final class AutoJunctions {
     if(id!=null)command.put("Road",roads.stream().filter(r->r.id().equals(id)).findFirst().orElseThrow().header());
     command.putBoolean("ForceJunctionA",forceA);command.putBoolean("ForceJunctionB",forceB);command.putInt("DegreeA",degree(data,a,id));command.putInt("DegreeB",degree(data,b,id));command.putBoolean("CenterA",center(data,a)!=null||ringAt(data,a)!=null);command.putBoolean("CenterB",center(data,b)!=null||ringAt(data,b)!=null);
     command.put("AutoA",RoadData.writeHint(data.constructionHint(level,a,true,id,nb.constructionNode().position(),levelEnds)));command.put("AutoB",RoadData.writeHint(data.constructionHint(level,b,false,id,na.constructionNode().position(),levelEnds)));data.jointPayload(command,a,b,id);
-    RoadRecord next=proposed(command);UUID owner=player==null?new UUID(0,0):player.getUUID();if(id!=null)owner=roads.stream().filter(r->r.id().equals(id)).findFirst().orElseThrow().owner();
+    RoadRecord next=proposed(command);UUID owner=RoadBuildWorld.owner(player);if(id!=null)owner=roads.stream().filter(r->r.id().equals(id)).findFirst().orElseThrow().owner();
     next=new RoadRecord(next.id(),owner,a,b,next.start(),next.end(),next.settings(),next.automatic(),4);if(id!=null){for(var old:roads)if(old.id().equals(id))next=old.retainAlignment(next,settings,na.constructionNode(),nb.constructionNode());}
     return connectRecord(level,player,next,command,controlNodes);
   }
@@ -488,7 +488,7 @@ public final class AutoJunctions {
     var data=RoadData.get(level);var old=data.streets.get(id);if(old==null)throw new IllegalArgumentException("道路已不存在");if(player!=null)RoadData.requireOwner(player,old.owner());
     var graph=context(data,Set.of(old.a(),old.b()));var roads=streets(graph);roads.removeIf(r->r.id().equals(id));var configs=centers(graph);
     // A consumed marker returns to its original two continuous split siblings.
-    configs.removeIf(c->{var pos=BlockPos.of(c.getLong("CenterPos"));if(!(level.getBlockEntity(pos) instanceof NodeEntity node)||node.junctionSource==null||!c.getList("ConnectorArms",Tag.TAG_COMPOUND).isEmpty())return false;
+    configs.removeIf(c->{var pos=BlockPos.of(c.getLong("CenterPos"));if(!(RoadBuildWorld.entity(level,pos) instanceof NodeEntity node)||node.junctionSource==null||!c.getList("ConnectorArms",Tag.TAG_COMPOUND).isEmpty())return false;
       var ends=roads.stream().filter(r->touches(r,pos)).toList();return ends.size()==2&&ends.stream().allMatch(r->r.fragment()!=null&&r.fragment().connection()==RoadSlicing.Connection.CONTINUOUS&&node.junctionSource.equals(r.fragment().source()));});
     return new StreetChange(graph,plan(roads,configs,graph),List.of(),Set.of(),id);
   }
@@ -507,14 +507,14 @@ public final class AutoJunctions {
   }
   public static void removeCenter(ServerLevel level,ServerPlayer player,UUID id){try(var work=RoadWorkChunks.open(level)){var current=payload(level,player,id);var graph=current.getCompound("JunctionGraph");var roads=streets(graph);BlockPos center=BlockPos.of(current.getLong("CenterPos"));Set<Long> ports=new HashSet<>();for(long p:current.getLongArray("Ports"))ports.add(p);
     if(current.getBoolean("GeneratedRing")&&roads.stream().anyMatch(r->ports.contains(r.a().asLong())||ports.contains(r.b().asLong())))throw new IllegalArgumentException("请先删除环岛接出的道路，再删除环岛");
-    if(current.getBoolean("GeneratedRing"))for(long point:ports){BlockPos pos=BlockPos.of(point);work.node(pos);if(level.getBlockEntity(pos) instanceof NodeEntity)RoadData.requireNode(level,pos,player);}
+    if(current.getBoolean("GeneratedRing"))for(long point:ports){BlockPos pos=BlockPos.of(point);work.node(pos);if(RoadBuildWorld.entity(level,pos) instanceof NodeEntity)RoadData.requireNode(level,pos,player);}
     if(roads.stream().anyMatch(r->r.assembly()!=null&&touches(r,center)))throw new IllegalArgumentException("此路口连接了道路组合；请用拆路器删除外接支路，组合道路会自动恢复");
     if(roads.stream().anyMatch(r->touches(r,center)&&JunctionPointConnections.group(RoadData.get(level),r.id())!=null))throw new IllegalArgumentException("请先删除附属点连接道路，再删除路口中心");
     roads.removeIf(r->touches(r,center));var configs=centers(graph);configs.removeIf(t->t.getUUID("Id").equals(id));commit(level,player,graph,plan(roads,configs,graph),List.of(),Set.of(),Set.of(id));
-    if(current.getBoolean("GeneratedRing"))for(long point:ports){BlockPos pos=BlockPos.of(point);if(!RoadData.get(level).linked(pos)&&level.getBlockEntity(pos) instanceof NodeEntity)level.removeBlock(pos,false);}
+    if(current.getBoolean("GeneratedRing"))for(long point:ports){BlockPos pos=BlockPos.of(point);if(!RoadData.get(level).linked(pos)&&RoadBuildWorld.entity(level,pos) instanceof NodeEntity)level.removeBlock(pos,false);}
   }}
   public static void createRing(ServerLevel level,ServerPlayer player,BlockPos pos,JunctionSpec spec){
-    UUID owner=player==null?new UUID(0,0):player.getUUID();CompoundTag c=config(pos,owner);c.putBoolean("GeneratedRing",true);c.put("Spec",JunctionCodec.write(spec));c.put("CenterNode",RoadRecord.writeNode(new Node(spec.center(),0,0)));var ports=RoundaboutTool.ports(spec);long[] positions=new long[ports.size()];var moves=new ArrayList<RoadData.NodeMove>();
+    UUID owner=RoadBuildWorld.owner(player);CompoundTag c=config(pos,owner);c.putBoolean("GeneratedRing",true);c.put("Spec",JunctionCodec.write(spec));c.put("CenterNode",RoadRecord.writeNode(new Node(spec.center(),0,0)));var ports=RoundaboutTool.ports(spec);long[] positions=new long[ports.size()];var moves=new ArrayList<RoadData.NodeMove>();
     for(int i=0;i<ports.size();i++){Node n=ports.get(i);BlockPos at=BlockPos.containing(n.position().x(),n.position().y(),n.position().z());positions[i]=at.asLong();CompoundTag snapshot=new CompoundTag();snapshot.putUUID("Owner",owner);snapshot.put("Node",RoadRecord.writeNode(n));snapshot.putBoolean("HeightExplicit",true);moves.add(new RoadData.NodeMove(null,at,n,snapshot));}c.putLongArray("Ports",positions);
     commit(level,player,new CompoundTag(),plan(List.of(),List.of(c)),moves,Set.of(),Set.of(c.getUUID("Id")));
   }

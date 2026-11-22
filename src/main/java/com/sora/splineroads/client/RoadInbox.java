@@ -87,7 +87,7 @@ public final class RoadInbox {
         if(cancelled.size()>1024){reset();recoveryNeeded.set(true);}
         return;
       }
-      if(!type.equals("open")&&!type.equals("result")&&!type.equals("delete")&&!type.equals("batchBarrier"))throw new IllegalArgumentException("无效的工具界面消息");
+      if(!type.equals("open")&&!type.equals("result")&&!type.equals("buildPending")&&!type.equals("delete")&&!type.equals("batchBarrier"))throw new IllegalArgumentException("无效的工具界面消息");
       if(type.equals("delete"))deleted.put(new RoadKey(tag.getString("Dimension"),tag.getUUID("Id")),sequence);
       if(type.equals("batchBarrier"))for(var entry:tag.getList("Ids",net.minecraft.nbt.Tag.TAG_COMPOUND))deleted.put(new RoadKey(tag.getString("Dimension"),((CompoundTag)entry).getUUID("Id")),sequence);
       sink.accept(new Event(tag,null,null));

@@ -65,9 +65,9 @@ public final class SmartSidewalks {
       var expanded=new com.sora.splineroads.core.RoadGeometry.Mesh(r.mesh.samples().stream().map(s->new com.sora.splineroads.core.RoadGeometry.Sample(s.center(),s.left(),s.distance(),s.halfWidth()+c.width())).toList(),r.mesh.settings(),r.mesh.min(),r.mesh.max(),r.mesh.length(),r.mesh.closed());
       var ring=new RoadSidewalks.Config(true,c.side(),1,c.material(),false);
       for(var cell:RoadSidewalks.cells(expanded,ring)){
-        var p=new BlockPos(cell.x(),cell.y(),cell.z());long key=p.asLong();if(!level.hasChunkAt(p))continue;
+        var p=new BlockPos(cell.x(),cell.y(),cell.z());long key=p.asLong();if(!RoadBuildWorld.loaded(level,p))continue;
         var current=RoadPlanInputs.state(level,p);var terrain=RoadBlocks.isCollider(current)||previous.containsKey(key)?originals.getOrDefault(key,current):current;
-        if(terrain.hasBlockEntity()||!terrain.getFluidState().isEmpty()||!net.minecraft.world.level.block.Block.isShapeFullBlock(terrain.getCollisionShape(level,p)))continue;
+        if(terrain.hasBlockEntity()||!terrain.getFluidState().isEmpty()||!net.minecraft.world.level.block.Block.isShapeFullBlock(terrain.getCollisionShape(RoadBuildWorld.blocks(level),p)))continue;
         if(!paving.near(new com.sora.splineroads.core.RoadGeometry.V(p.getX()+.5,p.getY()+1,p.getZ()+.5),c.width()+4))continue;
         boolean blocked=false;
         // A one-cell border query must not materialize every collision cell of

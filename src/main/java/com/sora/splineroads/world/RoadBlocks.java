@@ -56,6 +56,7 @@ public final class RoadBlocks {
   public static Function<Level, RoadIndex> clientIndex = l -> null;
 
   public static RoadIndex index(BlockGetter world) {
+    if (world instanceof RoadBuildWorld snapshot) return snapshot.data.index;
     if (world instanceof net.minecraft.server.level.ServerLevel server)
       return RoadData.get(server).index;
     return world instanceof Level level ? clientIndex.apply(level) : null;
