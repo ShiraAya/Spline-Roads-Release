@@ -42,8 +42,9 @@ public final class RailbedTerrainEdge {
     synchronized(CACHE){CACHE.put(key,result);}return result;
   }
   private static List<RoadRaster.Box> collision(BlockPos p,List<RoadIndex.Built> nearby){
-    VoxelShape shape=Shapes.block();for(var road:nearby)for(var cells:road.prepareCollision().deckColumn(p.getX(),p.getZ()).values())for(var b:cells)shape=Shapes.joinUnoptimized(shape,Shapes.box(b.x0(),0,b.z0(),b.x1(),1,b.z1()),BooleanOp.ONLY_FIRST);
-    return shape.optimize().toAabbs().stream().map(b->new RoadRaster.Box(b.minX,b.minY,b.minZ,b.maxX,b.maxY,b.maxZ)).toList();
+    var cuts=new ArrayList<RoadRaster.Box>();for(var road:nearby)for(var cells:road.prepareCollision().deckColumn(p.getX(),p.getZ()).values())for(var b:cells)cuts.add(new RoadRaster.Box(b.x0(),0,b.z0(),b.x1(),1,b.z1()));
+    var shape=Shapes.joinUnoptimized(Shapes.block(),RoadCollisionShape.build(cuts),BooleanOp.ONLY_FIRST);
+    return shape.toAabbs().stream().map(b->new RoadRaster.Box(b.minX,b.minY,b.minZ,b.maxX,b.maxY,b.maxZ)).toList();
   }
   static boolean eligible(BlockState material){
     return material.canOcclude()&&!material.hasBlockEntity()&&material.getFluidState().isEmpty()

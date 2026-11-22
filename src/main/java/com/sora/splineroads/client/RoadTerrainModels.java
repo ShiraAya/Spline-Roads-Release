@@ -33,6 +33,7 @@ public final class RoadTerrainModels {
   private static final ModelProperty<List<BakedQuad>> QUADS=new ModelProperty<>();
   private static final ModelProperty<List<BakedQuad>> COVERS=new ModelProperty<>();
   private static final ModelProperty<Integer> FILL_FACES=new ModelProperty<>();
+  private static final ModelProperty<List<BakedQuad>> LIT_FILL=new ModelProperty<>();
   private static final ModelProperty<Double> BLOCK_BOTTOM=new ModelProperty<>();
   private static final ChunkRenderTypeSet SOLID=ChunkRenderTypeSet.of(RenderType.solid());
   private static final Map<Section,Map<Integer,ModelData>> snapshots=new ConcurrentHashMap<>();
@@ -599,7 +600,6 @@ public final class RoadTerrainModels {
       var fill=input.get(com.sora.splineroads.world.RoadFillEntity.MATERIAL);
       if(fill!=null){int visible=0;for(var direction:Direction.values()){var adjacent=pos.relative(direction);if(!level.getBlockState(adjacent).isSolidRender(level,adjacent))visible|=1<<direction.ordinal();}input=input.derive().with(RoadAsphaltModel.POSITION,pos.immutable()).with(FILL_FACES,visible).build();}
       ModelData data=RoadTerrainHandoff.model(pos);
-      if(data==null)return withoutRoads(input);
       // A sloping deck lies inside a sealed collision cell. Vanilla's inset
       // face lighting samples that cell's darkness, although the actual road
       // surface is exposed above it. Supply the exterior light, retaining real
@@ -613,6 +613,20 @@ public final class RoadTerrainModels {
         public boolean opaque(int x,int y,int z){var p=new BlockPos(x,y,z);return level.getBlockState(p).getLightBlock(level,p)>=15;}
         public int packed(int x,int y,int z){return samples.computeIfAbsent(new BlockPos(x,y,z),p->net.minecraft.client.renderer.LevelRenderer.getLightColor(level,p));}
       };
+      if(fill!=null&&(Boolean.TRUE.equals(input.get(com.sora.splineroads.world.RoadFillEntity.CUTOUT))
+          ||input.get(com.sora.splineroads.world.RoadFillEntity.OUTLINE)!=null&&!input.get(com.sora.splineroads.world.RoadFillEntity.OUTLINE).isEmpty())){
+        var clean=withoutRoads(input).derive().with(LIT_FILL,null).build();
+        var terrain=getQuads(state,null,RandomSource.create(fill.getSeed(pos)),clean,RenderType.solid());
+        var litFill=new ArrayList<BakedQuad>();
+        for(var quad:terrain){
+          var packed=quad.getVertices().clone();var points=vertices(quad).stream().map(p->p.add(new RoadGeometry.V(pos.getX(),pos.getY(),pos.getZ()))).toList();
+          var face=new RoadSurface.Face(points,0);
+          for(int i=0;i<4;i++)packed[i*8+6]=RoadLighting.sample(face,points.get(i),lighting);
+          litFill.add(new BakedQuad(packed,quad.getTintIndex(),quad.getDirection(),quad.getSprite(),quad.isShade(),false));
+        }
+        input=input.derive().with(LIT_FILL,List.copyOf(litFill)).build();
+      }
+      if(data==null)return withoutRoads(input);
       var lit=new ArrayList<BakedQuad>();
       for(var quad:data.get(QUADS)){
         var vertices=quad.getVertices().clone();
@@ -634,7 +648,7 @@ public final class RoadTerrainModels {
     @Override public List<BakedQuad> getQuads(BlockState state,Direction side,RandomSource random,ModelData data,RenderType layer) {
       List<BakedQuad> base=originalVisible?super.getQuads(state,side,random,data,layer):List.of();
       var material=data.get(com.sora.splineroads.world.RoadFillEntity.MATERIAL);var cap=data.get(com.sora.splineroads.world.RoadFillEntity.CAP);
-      if(material!=null&&cap!=null){
+      if(material!=null&&cap!=null&&data.get(LIT_FILL)==null){
         // The retained material is a delegate, not another terrain carrier.
         // Passing this infill's ModelData into its wrapper would recurse.
         var model=markerModel(Minecraft.getInstance().getBlockRenderer().getBlockModel(material));
@@ -650,10 +664,12 @@ public final class RoadTerrainModels {
           if(side==null&&(layer==null||model.getRenderTypes(material,RandomSource.create(material.getSeed(pos==null?BlockPos.ZERO:pos)),materialData).contains(layer))){
             var faces=new ArrayList<BakedQuad>(model.getQuads(material,null,random,materialData,layer));
             for(var direction:Direction.values())faces.addAll(model.getQuads(material,direction,random,materialData,layer));
-            base=outline!=null&&!outline.isEmpty()?outlineQuads(faces,outline,cap,data.get(FILL_FACES)==null?63:data.get(FILL_FACES)):edgeQuads(faces,edge,cap);
+            var surfaces=data.get(com.sora.splineroads.world.RoadFillEntity.SURFACES);
+            base=surfaces!=null&&!surfaces.isEmpty()?solidQuads(faces,surfaces,cap):outline!=null&&!outline.isEmpty()?outlineQuads(faces,outline,cap,data.get(FILL_FACES)==null?63:data.get(FILL_FACES)):edgeQuads(faces,edge,cap);
           }
         }
       }
+      if(data.get(LIT_FILL)!=null)base=side==null&&(layer==null||layer==RenderType.solid())?data.get(LIT_FILL):List.of();
       var roads=data.get(QUADS);
       base=exposedFill(base,data);
       if(side!=null||(layer!=null&&layer!=RenderType.solid())||roads==null||roads.isEmpty())return base;
@@ -717,6 +733,28 @@ public final class RoadTerrainModels {
         for(int component=4;component<=5;component++){double first=Float.intBitsToFloat(source[component]);packed[at+component]=Float.floatToRawIntBits((float)(first+u*(Float.intBitsToFloat(source[8+component])-first)+t*(Float.intBitsToFloat(source[16+component])-first)));}
       }
       out.add(new BakedQuad(packed,face.getTintIndex(),face.getDirection(),face.getSprite(),face.isShade(),face.hasAmbientOcclusion()));
+    }return List.copyOf(out);
+  }
+  static List<BakedQuad> solidQuads(List<BakedQuad> textures,List<List<RoadGeometry.V>> surfaces,double cap){
+    var out=new ArrayList<BakedQuad>();
+    for(var polygon:surfaces){
+      var actual=polygon.stream().map(p->new RoadGeometry.V(p.x(),p.y()*cap,p.z())).toList();
+      var normal=RoadLighting.normal(new RoadSurface.Face(actual,0));
+      var direction=Direction.getNearest((float)normal.x(),(float)normal.y(),(float)normal.z());
+      for(var texture:textures)if(texture.getDirection()==direction){
+        var original=vertices(texture);var a=original.get(0);var b=original.get(1).sub(a);var c=original.get(2).sub(a);
+        double bb=b.dot(b),cc=c.dot(c),bc=b.dot(c),det=bb*cc-bc*bc;if(Math.abs(det)<1e-12)continue;
+        var quads=new ArrayList<List<RoadGeometry.V>>();if(polygon.size()==4)quads.add(polygon);else for(int j=1;j+1<polygon.size();j++)quads.add(List.of(polygon.get(0),polygon.get(j),polygon.get(j+1),polygon.get(j+1)));
+        int packedNormal=((byte)Math.round(normal.x()*127)&255)|(((byte)Math.round(normal.y()*127)&255)<<8)|(((byte)Math.round(normal.z()*127)&255)<<16);
+        for(var quad:quads){var source=texture.getVertices();var packed=source.clone();
+          for(int i=0;i<4;i++){var p=quad.get(i);var next=new RoadGeometry.V(p.x(),p.y()*cap,p.z());int at=i*8;
+            packed[at]=Float.floatToRawIntBits((float)next.x());packed[at+1]=Float.floatToRawIntBits((float)next.y());packed[at+2]=Float.floatToRawIntBits((float)next.z());packed[at+7]=packedNormal;
+            var d=next.sub(a);double u=(d.dot(b)*cc-d.dot(c)*bc)/det,t=(d.dot(c)*bb-d.dot(b)*bc)/det;
+            for(int component=4;component<=5;component++){double first=Float.intBitsToFloat(source[component]);packed[at+component]=Float.floatToRawIntBits((float)(first+u*(Float.intBitsToFloat(source[8+component])-first)+t*(Float.intBitsToFloat(source[16+component])-first)));}
+          }
+          out.add(new BakedQuad(packed,texture.getTintIndex(),direction,texture.getSprite(),texture.isShade(),false));
+        }
+      }
     }return List.copyOf(out);
   }
   private RoadTerrainModels(){}

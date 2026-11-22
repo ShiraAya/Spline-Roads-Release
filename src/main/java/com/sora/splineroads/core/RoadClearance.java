@@ -237,8 +237,15 @@ public final class RoadClearance {
    * road elevation: a long sloped beam could be rejected where it never touches road.
    * Boundary-only contact is not an obstruction. LaneDeck preserves real cut slots. */
   public static boolean structureInvades(RoadStructures.Part part,Mesh road,double headroom){
+    return structureInvades(part,road,headroom,drivingGrid(road));
+  }
+  /** Physical slab, including closed-slot footings and the paved shoulder.
+   * A rail may stand beside live traffic, but cannot disappear inside that slab. */
+  public static boolean structureInDeck(RoadStructures.Part part,Mesh road){
+    return structureInvades(part,road,0,grid(road));
+  }
+  private static boolean structureInvades(RoadStructures.Part part,Mesh road,double headroom,Grid index){
     var base=part.base();var top=part.top();if(base.size()<3)return false;
-    var index=drivingGrid(road);
     for(int i=1;i<base.size()-1;i++){
       var t=new Triangle(base.get(0),base.get(i),base.get(i+1),0,0,0);var roof=new Triangle(top.get(0),top.get(i),top.get(i+1),0,0,0);
       if(Math.abs(t.det())<EPS)continue;

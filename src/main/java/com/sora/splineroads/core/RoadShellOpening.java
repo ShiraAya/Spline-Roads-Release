@@ -21,11 +21,26 @@ public final class RoadShellOpening {
     }
     return result;
   }
+  /** Exact physical road slab, including non-driving closed-slot footings. */
+  public static RoadShellOpening deck(Mesh mesh){
+    var result=new RoadShellOpening();double depth=mesh.settings().thickness();var drop=new V(0,-depth,0);
+    for(int i=1;i<mesh.samples().size();i++)for(var strip:LaneDeck.strips(mesh,mesh.samples().get(i-1),mesh.samples().get(i)))
+      result.patch(List.of(strip.al().add(drop),strip.ar().add(drop),strip.br().add(drop),strip.bl().add(drop)),depth,depth);
+    return result;
+  }
   public RoadShellOpening(Mesh mesh,double from,double to,DoubleUnaryOperator height){this(mesh,from,to,height,1);}
   public RoadShellOpening(Mesh mesh,double from,double to,DoubleUnaryOperator height,double step){
     this(mesh,from,to,height,step,.08);
   }
   public RoadShellOpening(Mesh mesh,double from,double to,DoubleUnaryOperator height,double step,double edgePadding){
+    this(mesh,from,to,height,step,edgePadding,false);
+  }
+  /** A parent's closed motor slots and displaced bicycle lanes are not live air.
+   * Mouth apertures deliberately keep the nominal ribbon; only travel uses this. */
+  public static RoadShellOpening travel(Mesh mesh,double from,double to,DoubleUnaryOperator height){
+    return new RoadShellOpening(mesh,from,to,height,1,.08,true);
+  }
+  private RoadShellOpening(Mesh mesh,double from,double to,DoubleUnaryOperator height,double step,double edgePadding,boolean travel){
     if(step<=0||!Double.isFinite(step))throw new IllegalArgumentException("Invalid shell sample step");
     from=Math.max(mesh.first().distance(),from);to=Math.min(mesh.last().distance(),to);
     if(to<=from)return;
@@ -42,6 +57,7 @@ public final class RoadShellOpening {
       // Exact coalescing makes a long straight host a few apertures rather than
       // thousands of sequential polygon cuts. It preserves every curved corner.
       for(int candidate=end+1;candidate<nodes.size()&&nodes.get(candidate).distance()-nodes.get(i).distance()<=64;candidate++){
+        if(travel&&LaneDeck.hasOpenings(mesh))break;
         var a=nodes.get(i);var b=nodes.get(candidate);boolean linear=true;
         for(int k=i+1;k<candidate&&linear;k++){
           var m=nodes.get(k);double t=(m.distance()-a.distance())/(b.distance()-a.distance());
@@ -51,11 +67,22 @@ public final class RoadShellOpening {
         if(!linear)break;end=candidate;
       }
       var a=nodes.get(i);var b=nodes.get(end);double ha=roofs.get(i),hb=roofs.get(end);
+      if(travel&&LaneDeck.hasOpenings(mesh)){
+        for(var strip:LaneDeck.drivingStrips(mesh,a,b)){
+          V drop=new V(0,-depth,0);
+          var quad=List.of(strip.al().add(drop),strip.ar().add(drop),strip.br().add(drop),strip.bl().add(drop));
+          patch(quad,ha+depth,hb+depth);
+        }
+        i=end;continue;
+      }
       V al=a.at(a.halfWidth()+edgePadding,depth),ar=a.at(-a.halfWidth()-edgePadding,depth),bl=b.at(b.halfWidth()+edgePadding,depth),br=b.at(-b.halfWidth()-edgePadding,depth);
       var quad=List.of(al,ar,br,bl);
-      if(planar(quad))add(new Patch(quad,ha+depth,ha+depth,hb+depth));
-      else {add(new Patch(List.of(al,ar,br),ha+depth,ha+depth,hb+depth));add(new Patch(List.of(al,br,bl),ha+depth,hb+depth,hb+depth));}i=end;
+      patch(quad,ha+depth,hb+depth);i=end;
     }
+  }
+  private void patch(List<V> quad,double first,double last){
+    if(planar(quad))add(new Patch(quad,first,first,last));
+    else {add(new Patch(List.of(quad.get(0),quad.get(1),quad.get(2)),first,first,last));add(new Patch(List.of(quad.get(0),quad.get(2),quad.get(3)),first,last,last));}
   }
   private void add(Patch p){if(Math.abs(JunctionPaint.area(p.floor()))<1e-12)return;
     int x0=tile(p.floor().stream().mapToDouble(V::x).min().orElseThrow()),x1=tile(p.floor().stream().mapToDouble(V::x).max().orElseThrow());

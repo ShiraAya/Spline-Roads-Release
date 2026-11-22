@@ -65,7 +65,8 @@ public final class ElevatedAccessRoads {
           .filter(r->r.a().equals(end)||r.b().equals(end)).toList();
       if(neighbors.size()>1&&neighbors.stream().anyMatch(r->!oldNeighbors.contains(r.id())))
         throw new IllegalArgumentException("高架出入口只能连接道路尽头，不能把此端点改成多路交汇");
-      for(var r:neighbors){var before=data.index.roads.get(r.id());if(before==null||!sameGeometry(before.record,r))throw new IllegalArgumentException("该道路尽头连接高架出入口，请先删除连接再改变其线形或断面");}
+      for(var r:neighbors){var before=data.index.roads.get(r.id());if(before==null||!sameGeometry(before.record,r)){
+        throw new IllegalArgumentException("该道路尽头连接高架出入口，请先删除连接再改变其线形或断面");}}
     }
   }
   private static RoadRecord after(RoadData data,Map<UUID,RoadRecord> changed,Set<UUID> removed,UUID id){
@@ -111,7 +112,7 @@ public final class ElevatedAccessRoads {
   }
 
   private static boolean sameGeometry(RoadRecord a,RoadRecord b){return sameNode(a.start(),b.start())&&sameNode(a.end(),b.end())
-      &&sameSamples(a.rawMesh().samples(),b.rawMesh().samples())&&a.settings().thickness()==b.settings().thickness()
+      &&sameSamples(a.caps(0).rawMesh().samples(),b.caps(0).rawMesh().samples())&&a.settings().thickness()==b.settings().thickness()
       &&a.settings().style()==b.settings().style()&&RoadLanes.counts(a.settings()).equals(RoadLanes.counts(b.settings()))
       &&a.settings().options().leftTraffic()==b.settings().options().leftTraffic()&&sameEnds(a.settings(),b.settings());}
   private static boolean sameMeasure(double a,double b){return Math.abs(a-b)<=1e-9;}

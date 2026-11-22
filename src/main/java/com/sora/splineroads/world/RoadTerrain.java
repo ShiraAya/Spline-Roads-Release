@@ -11,6 +11,8 @@ import net.minecraft.world.phys.AABB;
 final class RoadTerrain {
  /** One transaction's restored-terrain column index, shared by every replanned road. */
  static final class Cache extends HashMap<BlockPos,List<AABB>> {
+  private record Probe(double x,double z,double y){}
+  final Map<Probe,Double> surfaces=new HashMap<>();
   final Map<Mesh,List<RoadAutoTunnels.RoofRegion>> cycleRoofs=new IdentityHashMap<>();
   final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap originalTop=new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
   Cache(Map<Long,BlockState> retained,Map<Long,BlockState> originals){
@@ -30,6 +32,10 @@ final class RoadTerrain {
       return Math.min(solidTop(x,z,deckY),deckY);
     }
     public double surface(double x,double z,double roadY){
+      if(terrainCache instanceof Cache cache)return cache.surfaces.computeIfAbsent(new Cache.Probe(x,z,roadY),p->surfaceUncached(x,z,roadY));
+      return surfaceUncached(x,z,roadY);
+    }
+    private double surfaceUncached(double x,double z,double roadY){
       double surface=cover.surface(x,z,roadY,probe->solidTop(x,z,probe));
       // A marker, an old excavated portal or a shallow natural cavity can break
       // the connected column at deck level. Actual soil at roof height still

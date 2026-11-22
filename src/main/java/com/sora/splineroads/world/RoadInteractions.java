@@ -176,7 +176,7 @@ final class RoadInteractions {
       boolean tunnel=r.mesh.settings().structure()==Structure.TUNNEL;
       var profiles=RoadAutoTunnels.roofRegions(r.record.structures());
       var childHeight=tunnelHeadroom(tube,context);
-      var air=new RoadShellOpening(r.mesh,0,r.mesh.length(),d->{var at=RoadStructures.sample(r.mesh,d);
+      var air=RoadShellOpening.travel(r.mesh,0,r.mesh.length(),d->{var at=RoadStructures.sample(r.mesh,d);
         double height=tunnel?RoadInfrastructure.ceiling(r.mesh.settings().options().infrastructure(),at.halfWidth(),0):4.25;
         if(!tunnel)for(var profile:profiles)if(d>=profile.from()&&d<=profile.to()){height=profile.first()+(profile.last()-profile.first())*(d-profile.from())/(profile.to()-profile.from());break;}
         // Remove the whole inner branch wall above the shared pavement. A
@@ -191,7 +191,9 @@ final class RoadInteractions {
       if(source.contains(r.record.id())){double end=mouthLining.samples().get(LaneRamps.contactEnd(mouthLining,all,source,true)).distance();portals.add(new RoadShellOpening(tube.mesh,0,end,tunnelHeadroom(tube,context)));var join=RoadTunnelNose.build(r.mesh,tube.mesh,0,end,noseCeiling(r),tunnelHeadroom(tube,context));shell=RoadTunnelNose.apply(shell,join);noseCuts.add(RoadShellOpening.solids(join.volume()));}
       if(target.contains(r.record.id())){double start=mouthLining.samples().get(LaneRamps.contactEnd(mouthLining,all,target,false)).distance();portals.add(new RoadShellOpening(tube.mesh,start,tube.mesh.length(),tunnelHeadroom(tube,context)));var join=RoadTunnelNose.build(r.mesh,tube.mesh,start,tube.mesh.length(),noseCeiling(r),tunnelHeadroom(tube,context));shell=RoadTunnelNose.apply(shell,join);noseCuts.add(RoadShellOpening.solids(join.volume()));}
       for(var aperture:portals){var clipped=new ArrayList<Part>();for(var p:shell)clipped.addAll(aperture.cut(p));shell=clipped;}
-      var cuts=new ArrayList<RoadShellOpening>();cuts.add(air);cuts.add(RoadShellOpening.solids(shell.stream().filter(p->p.material()==Material.TUNNEL).toList()));cuts.addAll(noseCuts);parents.put(r.record.id(),List.copyOf(cuts));
+      var cuts=new ArrayList<RoadShellOpening>();cuts.add(air);
+      for(var cycle:RoadsideBypass.travel(r.mesh))cuts.add(RoadShellOpening.travel(cycle,0,cycle.length(),d->RoadsideBypass.HEADROOM));
+      cuts.add(RoadShellOpening.solids(shell.stream().filter(p->p.material()==Material.TUNNEL).toList()));cuts.addAll(noseCuts);parents.put(r.record.id(),List.copyOf(cuts));
     }
     var out=new ArrayList<Part>();
     for(var p:parts){

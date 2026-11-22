@@ -26,6 +26,8 @@ import net.minecraft.world.phys.AABB;
  * This helper never requests an unloaded chunk or performs a world mutation. */
 public final class RoadPreviewGround implements RoadStructures.Ground {
   private final Level level;
+  private RoadPreviewSnapshot snapshot;
+  RoadPreviewGround snapshot(RoadPreviewSnapshot value){snapshot=value;chunks.putAll(value.observed);return this;}
   private final Mesh mesh;
   private final List<Mesh> nearby;
   private final List<Mesh> obstacles;
@@ -90,8 +92,8 @@ public final class RoadPreviewGround implements RoadStructures.Ground {
         for(var part:r.structures())if(part.material().name().startsWith("WALK_"))result.joinedPaving.put(part,other.mesh);
       }
     }
-    var tunnels=roads.stream().filter(RoadIndex.Built::hasTunnel).toList();
-    result.cover=new RoadTerrainCover(chunk->tunnels.stream().filter(r->r.chunks.contains(chunk)).toList());
+    var tunnels=roads.stream().filter(r->r.hasTunnel()||!RoadAutoTunnels.openRegions(r.record.structures()).isEmpty()).toList();
+    result.cover=new RoadTerrainCover(chunk->tunnels.stream().filter(r->r.chunks.contains(chunk)).toList(),true);
     nearby.forEach(r->result.railShells.put(r.mesh,r.record.structures()));
     return result;
   }
@@ -240,13 +242,31 @@ public final class RoadPreviewGround implements RoadStructures.Ground {
     return Math.min(solidTop(x,z,deckY,true),deckY);
   }
   @Override public double surface(double x,double z,double roadY){
-    return cover==null?RoadTerrainSurface.connected(roadY,probe->solidTop(x,z,probe,false))
+    return surfaceCache.computeIfAbsent(new SurfaceProbe(x,z,roadY),p->surfaceUncached(x,z,roadY));
+  }
+  private record SurfaceProbe(double x,double z,double y){}
+  private final Map<SurfaceProbe,Double> surfaceCache=new HashMap<>();
+  private double surfaceUncached(double x,double z,double roadY){
+    double result=cover==null?RoadTerrainSurface.connected(roadY,probe->solidTop(x,z,probe,false))
         :cover.surface(x,z,roadY,probe->solidTop(x,z,probe,false));
+    double probe=roadY+RoadAutoTunnels.MIN_COVER+.05,overhead=solidTop(x,z,probe,false);
+    if(Double.isFinite(overhead)&&overhead>probe+1e-7){double under=solidTop(x,z,probe-1.05,false);
+      if(Double.isFinite(under)&&under>probe-1.05+1e-7){double top=RoadTerrainSurface.connected(probe,p->solidTop(x,z,p,false));
+        if(Double.isFinite(top))result=Double.isFinite(result)?Math.max(result,top):top;
+      }
+    }return result;
   }
   private double solidTop(double x,double z,double deckY,boolean schematicFoundation){
     if(level==null)return schematicFoundation?deckY:Double.NaN;
-    var key=BlockPos.containing(x,Math.min(level.getMaxBuildHeight()-1,deckY),z);
+    var key=BlockPos.containing(x,Math.min((snapshot==null?level.getMaxBuildHeight():snapshot.getMaxBuildHeight())-1,deckY),z);
     queries.add(key);
+    if(snapshot!=null){
+      var values=columns.get(key);
+      if(values==null&&snapshot.loaded(key)){values=snapshotColumn(key);columns.put(key,values);}
+      if(values==null)return schematicFoundation?deckY:Double.NaN;
+      for(var box:values)if(x>=box.minX-1e-7&&x<=box.maxX+1e-7&&z>=box.minZ-1e-7&&z<=box.maxZ+1e-7&&box.minY<deckY-1e-7)return box.maxY;
+      return Double.NaN;
+    }
     // Keep known physical columns if they leave view while another column
     // forces a rebuild. Only never-observed terrain uses the schematic default.
     long position=ChunkPos.asLong(key.getX()>>4,key.getZ()>>4);
@@ -272,6 +292,21 @@ public final class RoadPreviewGround implements RoadStructures.Ground {
     return chunk instanceof LevelChunk loaded&&!(loaded instanceof EmptyLevelChunk)?loaded:null;
   }
 
+  private List<AABB> snapshotColumn(BlockPos key){
+    var result=new ArrayList<AABB>();
+    int bottom=Math.max(snapshot.getMinBuildHeight(),key.getY()-(int)RoadStructures.MAX_DROP);
+    for(int y=key.getY();y>=bottom;y--){
+      RoadPlanningBudget.check();var pos=new BlockPos(key.getX(),y,key.getZ());
+      var state=snapshot.getBlockState(pos);double cap=1;
+      if(RoadBlocks.isCollider(state)){cap=snapshot.cap(pos);state=snapshot.retained(pos,state.getValue(RoadBlocks.Road.FILL).state());}
+      if(state.isAir()||state.is(BlockTags.LEAVES)||state.is(BlockTags.LOGS)||state.is(SplineRoads.NODE.get())||state.is(SplineRoads.TUNNEL_AIR.get()))continue;
+      var shape=state.getCollisionShape(snapshot,pos);
+      for(var box:shape.toAabbs())if(box.minY<cap)result.add(new AABB(box.minX,box.minY,box.minZ,box.maxX,Math.min(box.maxY,cap),box.maxZ).move(pos));
+      if(y<key.getY()&&cap==1&&Block.isShapeFullBlock(shape))break;
+    }
+    result.sort(Comparator.comparingDouble((AABB box)->box.maxY).reversed());return List.copyOf(result);
+  }
+
   private static List<AABB> column(Level level,BlockPos key){
     var result=new ArrayList<AABB>();
     int first=Math.min(key.getY(),level.getHeight(Heightmap.Types.WORLD_SURFACE,key.getX(),key.getZ())-1);
@@ -284,8 +319,7 @@ public final class RoadPreviewGround implements RoadStructures.Ground {
         else state=state.getValue(RoadBlocks.Road.FILL).state();
       }
       if(state.isAir()||state.is(BlockTags.LEAVES)||state.is(BlockTags.LOGS)
-          ||state.is(SplineRoads.NODE.get())||state.is(SplineRoads.TUNNEL_AIR.get())
-          ||!state.getFluidState().isEmpty())continue;
+          ||state.is(SplineRoads.NODE.get())||state.is(SplineRoads.TUNNEL_AIR.get()))continue;
       var shape=state.getCollisionShape(level,pos);
       for(var box:shape.toAabbs())if(box.minY<cap)
         result.add(new AABB(box.minX,box.minY,box.minZ,box.maxX,Math.min(box.maxY,cap),box.maxZ).move(pos));
@@ -327,8 +361,8 @@ public final class RoadPreviewGround implements RoadStructures.Ground {
     double minZ=Math.min(part.a().z(),part.b().z())-w,maxZ=Math.max(part.a().z(),part.b().z())+w;
     double minY=Math.min(part.a().y(),part.b().y())-part.verticalFrame(),maxY=Math.max(part.a().y(),part.b().y())+part.height()+part.verticalFrame();
     for(var other:obstacles){
-      if(railA!=null&&RoadRailJoin.sharedRail(other,railA,railB))continue;
       if(maxX<other.min().x()-2||minX>other.max().x()+2||maxZ<other.min().z()-2||minZ>other.max().z()+2)continue;
+      if(railA!=null&&RoadRailJoin.sharedRail(other,railA,railB))continue;
       if(clearance.cycleBlocked(part,other))return true;
       if(maxY<other.min().y()-.05||minY>other.max().y()+RoadStructureClearance.headroom(other))continue;
       if(RoadSidewalks.smoothPart(part))continue;

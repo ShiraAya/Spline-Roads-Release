@@ -20,7 +20,9 @@ public final class SidewalkJoins {
   private final Map<Long,List<Cut>> grid=new HashMap<>();
   private Map<Long,Integer> temporary;
   public SidewalkJoins(Collection<Mesh> decks,Collection<Part> prior){
-    for(var m:decks)for(int i=1;i<m.samples().size();i++){var a=m.samples().get(i-1);var b=m.samples().get(i);add(new Cut(List.of(a.at(a.halfWidth(),0),a.at(-a.halfWidth(),0),b.at(-b.halfWidth(),0),b.at(b.halfWidth(),0)),-1));}
+    for(var m:decks)for(int i=1;i<m.samples().size();i++){var a=m.samples().get(i-1);var b=m.samples().get(i);
+      for(var strip:LaneDeck.strips(m,a,b))add(new Cut(List.of(strip.al(),strip.ar(),strip.br(),strip.bl()),-1));
+    }
     for(var p:prior)if(RoadSidewalks.smoothPart(p))add(new Cut(p.base(),layer(p)));
   }
   private static long key(int x,int z){return ((long)x<<32)^(z&0xffffffffL);}
@@ -47,7 +49,10 @@ public final class SidewalkJoins {
       for(int x=(int)Math.floor(box.minX/8);x<=(int)Math.floor(box.maxX/8);x++)for(int z=(int)Math.floor(box.minZ/8);z<=(int)Math.floor(box.maxZ/8);z++)candidates.addAll(grid.getOrDefault(key(x,z),List.of()));
       List<List<V>> polygons=List.of(original);boolean changed=false;
       for(var cut:candidates){
-        if(cut.layer>=0&&cut.layer!=box.layer||cut.maxX<=box.minX+1e-7||cut.minX>=box.maxX-1e-7||cut.maxZ<=box.minZ+1e-7||cut.minZ>=box.maxZ-1e-7||box.low>cut.high+.6||box.high<cut.low-.6)continue;
+        // A descending neighbor still owns the traffic space above its deck.
+        // Footways at the host's height must not become a low roof over it.
+        double clearance=cut.layer<0?4.85:.6;
+        if(cut.layer>=0&&cut.layer!=box.layer||cut.maxX<=box.minX+1e-7||cut.minX>=box.maxX-1e-7||cut.maxZ<=box.minZ+1e-7||cut.minZ>=box.maxZ-1e-7||box.low>cut.high+clearance||box.high<cut.low-.6)continue;
         var next=new ArrayList<List<V>>();for(var poly:polygons)next.addAll(RoadSurface.subtract(poly,cut.points));
         double before=polygons.stream().mapToDouble(v->Math.abs(JunctionPaint.area(v))).sum(),after=next.stream().mapToDouble(v->Math.abs(JunctionPaint.area(v))).sum();
         if(before-after>1e-7){changed=true;polygons=next;}if(polygons.isEmpty())break;

@@ -190,6 +190,14 @@ final class StructurePlanner {
     var terrainReference=built.record.terrainClassificationMesh();
     var terrain=RoadTerrain.read(level,retained,originals,terrainCache);
     var link=LaneTopology.metadata(built.record).link();
+    // A connector's temporary closure is clearance for its crossing deck, not
+    // an invitation to move each new pier farther into the lane to be restored.
+    // Plan shafts against that host's complete lane, independently of this pass.
+    var pierDecks=new IdentityHashMap<Mesh,Mesh>();
+    for(var other:obstacles){var md=LaneTopology.metadata(other.record);
+      var cuts=md.cuts().stream().filter(c->!c.temporary()||!c.connection().equals(built.record.id())).toList();
+      if(cuts.size()!=md.cuts().size())pierDecks.put(other.mesh,other.record.withLanePoints(md.cuts(cuts)).mesh());
+    }
     var stackMesh=RoadStreetscape.resolve(built.mesh,terrain);
     var stackNeighbors=nearby.stream().filter(r->r.record.junction()==null&&r.record.toll()==null&&!r.record.legacyRailway())
         .map(r->RoadStreetscape.resolve(r.mesh,terrain)).toList();
@@ -355,8 +363,8 @@ final class StructurePlanner {
                       base.stream().mapToDouble(V::x).max().orElseThrow(),base.stream().mapToDouble(V::y).max().orElseThrow()+part.height(),base.stream().mapToDouble(V::z).max().orElseThrow());
                 }
                 for (var other : obstacles) {
-                  if(railA!=null&&RoadRailJoin.sharedRail(other.mesh,railA,railB))continue;
                   if(box.maxX<other.mesh.min().x()-2||box.minX>other.mesh.max().x()+2||box.maxZ<other.mesh.min().z()-2||box.minZ>other.mesh.max().z()+2)continue;
+                  if(railA!=null&&RoadRailJoin.sharedRail(other.mesh,railA,railB))continue;
                   if(roadClearance.cycleBlocked(part,other.mesh))return true;
                   if (box.maxY < other.mesh.min().y() - .05 || box.minY > other.mesh.max().y() + RoadStructureClearance.headroom(other.mesh))
                     continue;
@@ -381,7 +389,7 @@ final class StructurePlanner {
                   }
                   // Use the actual shaft prism and the live deck bands, including
                   // framed/tilted supports, instead of the voxel-column envelope.
-                  if(!JunctionSupportSpace.contains(part,other.record.junction())&&RoadStructureClearance.pierBlocked(part,other.mesh,nearby.stream().map(r->r.mesh).toList()))return true;
+                  if(!JunctionSupportSpace.contains(part,other.record.junction())&&RoadStructureClearance.pierBlocked(part,pierDecks.getOrDefault(other.mesh,other.mesh),nearby.stream().map(r->r.mesh).toList()))return true;
                 }
                 return false;
               }
@@ -391,7 +399,7 @@ final class StructurePlanner {
       slabs=new RoadsideBypass(built.mesh,nearby.stream().map(r->r.mesh).toList()).apply(slabs);
       var grading=new ArrayList<>(slabs);nearby.forEach(r->grading.addAll(r.record.structures()));
       slabs=new TactileSurface(grading).gradePaving(slabs);
-      var joins=new SidewalkJoins(nearby.stream().filter(r->Math.abs(r.mesh.first().center().y()-built.mesh.first().center().y())<4).map(r->r.mesh).toList(),nearby.stream().flatMap(r->r.record.structures().stream()).filter(RoadSidewalks::smoothPart).toList());
+      var joins=new SidewalkJoins(nearby.stream().map(r->r.mesh).toList(),nearby.stream().flatMap(r->r.record.structures().stream()).filter(RoadSidewalks::smoothPart).toList());
       var reserved=new ArrayList<>(built.record.structures());
       reserved.addAll(joins.clip(RoadInteractions.openPortal(built,slabs,nearby,all)).stream().filter(RoadSidewalks::smoothPart).toList());
       return built.record.structures(reserved);
@@ -511,7 +519,7 @@ final class StructurePlanner {
     parts=RoadAutoTunnels.enclose(built.mesh,ground,parts,RoadInteractions.tunnelHeadroom(built,all));
     parts=new RoadsideBypass(built.mesh,nearby.stream().map(r->r.mesh).toList()).apply(parts);
     parts=new TactileSurface(grading).gradePaving(parts);
-    var joins=new SidewalkJoins(nearby.stream().filter(r->Math.abs(r.mesh.first().center().y()-built.mesh.first().center().y())<4).map(r->r.mesh).toList(),nearby.stream().flatMap(r->r.record.structures().stream()).filter(RoadSidewalks::smoothPart).toList());
+    var joins=new SidewalkJoins(nearby.stream().map(r->r.mesh).toList(),nearby.stream().flatMap(r->r.record.structures().stream()).filter(RoadSidewalks::smoothPart).toList());
     var result = new ArrayList<>(joins.clip(RoadInteractions.openPortal(built,parts,nearby,all)));
     RoadStructures.terminalPosts(result,ground);
     TollRoads.alignApproachRails(built,nearby,result);

@@ -546,10 +546,15 @@ public final class RoadJunction {
         if(layout.cycleWidth()>.01){
           // The motor/cycle boundary, not the far sidewalk edge, is the EXTRA
           // mouth. Keep this guide in the existing single-owner paint pass.
-          if(LaneRampPaint.auxiliaryAt(main,a,b,side,auxiliary)
-              &&auxiliary.stream().anyMatch(item->item.side()==side
-                  &&LaneRampPaint.guideFits(main,a,b,side,item.ramp())
-                  &&openGuide(main,a,b,side,item.ramp(),rampBoundaries,neighbors))){
+          if(neighbors.stream().anyMatch(ramp->{
+            if(!ramp.settings().style().ramp())return false;
+            if(ramp.settings().options().lanePoints().link()!=null
+                &&!LaneRampPaint.auxiliaryAt(main,a,b,side,auxiliary))return false;
+            var q=RoadQueries.horizontal(ramp,mid.at(layout.outer(side),0));
+            return Math.abs(q.sample().left().dot(mid.left()))>.90
+                &&LaneRampPaint.guideFits(main,a,b,side,ramp)
+                &&openGuide(main,a,b,side,ramp,rampBoundaries,neighbors);
+          })){
             var strokes=new ArrayList<Paint>();stroke(strokes,a.at(RoadProfile.layout(main,a).outer(side),0),b.at(RoadProfile.layout(main,b).outer(side),0),.15);
             for(var paint:strokes)if(cuts.stream().noneMatch(c->RoadSurface.area(RoadSurface.intersect(paint.points(),c))>1e-8))out.add(paint);
           }
@@ -785,7 +790,8 @@ public final class RoadJunction {
     int toward = at.left().dot(hs.center().sub(at.center())) > 0 ? 1 : -1;
     int outside = hs.left().dot(at.center().sub(hs.center())) >= 0 ? 1 : -1;
     V rampEdge = at.at(ramp.settings().style().connectorRamp()?RoadSurface.edgeOffset(ramp,at,-toward):-toward*(at.halfWidth()-.3),0);
-    V mainEdge = hs.at(outside * (hs.halfWidth() - .3), 0);
+    var mainLayout=RoadProfile.layout(host,hs);
+    V mainEdge = hs.at(mainLayout.cycleWidth()>.01?mainLayout.outer(outside):outside * (hs.halfWidth() - .3), 0);
     // Follow the exposed boundary of the paved union; a narrow ramp footprint may still
     // lie inside the main shoulder, where its own edge would draw a second floating line.
     return rampEdge.sub(mainEdge).dot(hs.left()) * outside > 0 ? rampEdge : mainEdge;
@@ -1024,7 +1030,7 @@ public final class RoadJunction {
   private static V guideEdge(Route route, Sample at, Sample other) {
     var layout = RoadProfile.layout(route.mesh, at);
     int side = at.left().dot(other.center().sub(at.center())) >= 0 ? 1 : -1;
-    if (layout.catalog().type() == RoadProfile.Type.HIGHWAY)
+    if (layout.catalog().type() == RoadProfile.Type.HIGHWAY || layout.cycleWidth()>.01)
       return at.at(layout.outer(side), 0);
     return innerEdge(route, at, other);
   }

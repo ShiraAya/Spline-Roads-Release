@@ -312,6 +312,13 @@ public final class LaneTopology {
   private static boolean samePreparedGeometry(Map<UUID,RoadRecord> before,Map<UUID,RoadRecord> after,LanePoints.Ref ref){
     if(ref.road()==null)return true;var a=before.get(ref.road());var b=after.get(ref.road());return a!=null&&b!=null&&a.rawMesh().samples().equals(b.rawMesh().samples());
   }
+  static boolean rawObstacleChanged(RoadRecord before,RoadRecord after){
+    return before==null||before.settings().thickness()!=after.settings().thickness()
+        ||before.settings().style()!=after.settings().style()||before.clearance()!=after.clearance()
+        ||before.settings().structure()!=after.settings().structure()
+        ||!before.settings().options().infrastructure().equals(after.settings().options().infrastructure())
+        ||!before.rawMesh().samples().equals(after.rawMesh().samples());
+  }
   private static void rebuild(RoadData data,UUID id,Map<UUID,RoadRecord> all,Set<UUID> done,Set<UUID> visiting,Set<UUID> scope,Map<UUID,RoadRecord> planned){if(done.contains(id)||!scope.contains(id))return;var r=all.get(id);if(r==null)throw new IllegalArgumentException("依赖道路已不存在："+id);var l=metadata(r).link();if(l==null){done.add(id);return;}if(!visiting.add(id))throw new IllegalArgumentException("匝道引用出现循环依赖");rebuild(data,l.from().road(),all,done,visiting,scope,planned);if(l.to().road()!=null)rebuild(data,l.to().road(),all,done,visiting,scope,planned);
     var prepared=planned==null?null:planned.get(id);
     if(prepared!=null&&sameDeck(r,prepared)&&Objects.equals(l,metadata(prepared).link())&&portsMatch(r,all)
@@ -319,11 +326,22 @@ public final class LaneTopology {
         &&(!l.options().sourceExtra()||samePreparedGeometry(planned,all,l.from()))
         &&(!(l.options().targetExtra()||l.targetOffset()!=0)||samePreparedGeometry(planned,all,l.to()))){
       try{
-        LaneRamps.validate(r.mesh(),all,id,l);RoadCycleChain.checkRamp(all,id,r.mesh());
+        // This exact route already passed the route preflight. Restoring host
+        // reservations must not reroute it against its own provisional closures:
+        // doing so discards its piers and resets the closure before every pass.
+        // Check only newly changed raw obstacle decks here; restored lanes are
+        // checked separately below against the retained final route.
+        var changed=new HashSet<UUID>();
+        for(var obstacle:all.values()){
+          var prior=planned.get(obstacle.id());
+          if(rawObstacleChanged(prior,obstacle))changed.add(obstacle.id());
+        }
+        if(!changed.isEmpty())LaneRamps.validateChanges(r.mesh(),all,id,l,changed);
+        RoadCycleChain.checkRamp(all,id,r.mesh());
         for(var road:all.values())for(var cut:metadata(road).cuts())if(cut.connection().equals(id)&&!cut.arrival()&&cut.temporary())LaneReopening.validateRestored(road.mesh(),cut.lane(),r.mesh(),id);
         visiting.remove(id);done.add(id);return;
       }
-      catch(IllegalArgumentException changedClearance){/* Refit against final host terrain below. */}
+      catch(IllegalArgumentException changedClearance){/* Rebuild against the changed obstacle below. */}
     }
     var existing=data.index.roads.get(id);
     if(existing!=null&&sameDeck(r,existing.record)&&Objects.equals(l,metadata(existing.record).link())

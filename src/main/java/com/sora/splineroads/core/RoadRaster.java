@@ -135,6 +135,14 @@ public final class RoadRaster {
     }
 
     /** Exact local top faces for block-footway contact, not rounded collision boxes. */
+    public List<RoadStructures.Part> structureParts(Cell cell,java.util.function.Predicate<RoadStructures.Part> match){
+      return furniture.getOrDefault(key(Math.floorDiv(cell.x(),4),Math.floorDiv(cell.z(),4)),List.of()).stream().filter(match).filter(p->{
+        double extent=p.halfExtent();return cell.x()+1>Math.min(p.a().x(),p.b().x())-extent&&cell.x()<Math.max(p.a().x(),p.b().x())+extent
+          &&cell.z()+1>Math.min(p.a().z(),p.b().z())-extent&&cell.z()<Math.max(p.a().z(),p.b().z())+extent
+          &&cell.y()+1>Math.min(p.a().y(),p.b().y())-p.verticalFrame()&&cell.y()<Math.max(p.a().y(),p.b().y())+p.height()+p.verticalFrame();
+      }).toList();
+    }
+
     public List<List<V>> structureTops(Cell cell,java.util.function.Predicate<RoadStructures.Part> match){
       var result=new ArrayList<List<V>>();
       for(var part:furniture.getOrDefault(key(Math.floorDiv(cell.x(),4),Math.floorDiv(cell.z(),4)),List.of())){

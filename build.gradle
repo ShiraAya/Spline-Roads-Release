@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.sora.splineroads'
-version = '2.1.2-fix1'
+version = '2.1.2-fix2'
 base { archivesName = 'splineroads' }
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
@@ -30,6 +30,21 @@ tasks.register('validateFix1', JavaExec) {
     args project.findProperty('feedbackWorld') ?: 'F:/SR-feedback-2.1.2-fix1/world/data/splineroads.dat'
     jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
 }
+tasks.register('validateFix2', JavaExec) {
+    dependsOn validationClasses
+    classpath = sourceSets.validation.runtimeClasspath
+    mainClass = 'com.sora.splineroads.world.FeedbackFix2Core'
+    args project.findProperty('feedbackWorld') ?: 'F:/SR-feedback-2.1.2-fix2/world/data/splineroads.dat'
+    jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
+}
+tasks.register('inspectFix2', JavaExec) {
+    dependsOn validationClasses
+    classpath = sourceSets.validation.runtimeClasspath
+    mainClass = 'com.sora.splineroads.world.FeedbackFix2Inspect'
+    args project.findProperty('feedbackWorld') ?: 'F:/SR-feedback-2.1.2-fix2/world/data/splineroads.dat'
+    if (project.hasProperty('feedbackRailCompare')) args project.property('feedbackRailCompare')
+    jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
+}
 
 minecraft {
     mappings channel: 'official', version: '1.20.1'
@@ -45,6 +60,13 @@ minecraft {
             mods { splineroads { source sourceSets.main } }
         }
         client {
+            if (project.hasProperty('feedbackFix2Client')) {
+                mods { splineroads { source sourceSets.gameTest } }
+                property 'road.feedbackFix2Client', 'true'
+                if (project.hasProperty('feedbackFix2Rail')) property 'road.feedbackFix2Rail', 'true'
+                if (project.hasProperty('feedbackFix2RailUpdated')) property 'road.feedbackFix2RailUpdated', 'true'
+                jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
+            }
             if (project.hasProperty('feedback212Client')) {
                 mods { splineroads { source sourceSets.gameTest } }
                 property 'road.feedback212Client', 'true'
@@ -54,6 +76,18 @@ minecraft {
         }
         server {
             args '--nogui'
+            if (project.hasProperty('feedbackFix2')) {
+                mods { splineroads { source sourceSets.gameTest } }
+                property 'road.feedbackFix2', 'true'
+                if (project.hasProperty('feedbackFix2RailWorld')) property 'road.feedbackFix2RailWorld', 'true'
+                if (project.hasProperty('feedbackFix2Geometry')) property 'road.feedbackFix2Geometry', 'true'
+                if (project.hasProperty('feedbackFix2Scenes')) property 'road.feedbackFix2Scenes', 'true'
+                if (project.hasProperty('feedbackFix2Profile')) {
+                    property 'road.feedbackFix2OnlySlow', 'true'
+                    jvmArgs '-XX:StartFlightRecording=settings=profile,dumponexit=true,filename=feedback-fix2.jfr'
+                }
+                jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
+            }
             if (project.hasProperty('feedbackFix1')) {
                 mods { splineroads { source sourceSets.gameTest } }
                 property 'road.feedbackFix1', 'true'

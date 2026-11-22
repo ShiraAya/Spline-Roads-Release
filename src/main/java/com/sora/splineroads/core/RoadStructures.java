@@ -344,7 +344,7 @@ public final class RoadStructures {
         double insetA=RoadRailJoin.inset(mesh,a,side),insetB=RoadRailJoin.inset(mesh,b,side);
         V aa=a.at(side*(a.halfWidth()-insetA),0),bb=b.at(side*(b.halfWidth()-insetB),0),mid=aa.add(bb).mul(.5);
         boolean raised=RoadStreetscape.raised(mesh,sample(mesh,(a.distance()+b.distance())/2),side);
-        if(!raised)for(V point:List.of(aa,mid,bb))if(elevated(mesh,point,ground)){
+        if(!raised&&mesh.settings().structure()==Structure.AUTO)for(V point:List.of(aa,mid,bb))if(elevated(mesh,point,ground)){
           raised=true;break;
         }
         V sum=a.left().add(b.left());V normal=sum.horizontalLength()<1e-7?a.left():sum.horizontalUnit();

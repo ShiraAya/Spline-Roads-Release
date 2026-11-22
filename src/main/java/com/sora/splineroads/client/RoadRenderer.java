@@ -915,6 +915,7 @@ public final class RoadRenderer {
   private static Mesh ghostMesh;
   private static List<Mesh> ghostRoads;
   private static List<RoadSurface.Face> ghostFaces;
+  private static List<RoadSurface.Face> ghostFurnitureFaces;
   private static VertexBuffer ghostBuffer;
   private static V ghostOrigin;
   private static boolean ghostDelete, ghostJunction, ghostConflict;
@@ -934,9 +935,8 @@ public final class RoadRenderer {
     boolean unchanged=savedPreview(ClientRoads.preview);
     boolean furniture=!unchanged&&!deleting&&ClientRoads.nodePreviews.size()<3&&ClientRoads.preview.settings().style()!=Style.TOLL
         &&RoadProfile.modern(ClientRoads.preview.settings().style());
-    boolean furnitureChanged=furniture&&(furniturePreview!=ClientRoads.preview
-        ||furnitureRevision!=ClientRoads.INDEX.revision()||furnitureContextRevision!=previewContextRevision
-        ||(furnitureGround==null||!furnitureGround.current(Minecraft.getInstance().level)));
+    if(furniture)previewFurniture(ClientRoads.preview);
+    boolean furnitureChanged=furniture&&ghostFurnitureFaces!=furnitureFaces;
     if (ghostMesh != ClientRoads.preview || ghostRoads != ClientRoads.nodePreviews
         || ghostFaces != JunctionScreen.previewFaces || ghostDelete != deleting || ghostJunction != junction
         || ghostConflict != ClientRoads.conflictPreview || furnitureChanged) {
@@ -955,6 +955,7 @@ public final class RoadRenderer {
       ghostMesh = ClientRoads.preview; ghostRoads = ClientRoads.nodePreviews;
       ghostFaces = JunctionScreen.previewFaces; ghostDelete = deleting; ghostJunction = junction;
       ghostConflict=ClientRoads.conflictPreview;
+      ghostFurnitureFaces=furnitureFaces;
     }
     var type=ClientRoads.conflictPreview?CONFLICT:GHOST;
     type.setupRenderState();
@@ -1439,6 +1440,11 @@ public final class RoadRenderer {
 
   static String uploadMetrics(){var p=pendingUpload;long lightBytes=0;for(var map:List.of(regions,dormant))for(var section:map.values())lightBytes+=section.lightReads.bytes()+section.surfaceReads.bytes()+section.detailReads.bytes();return "upload frames="+uploadFrames+" zero="+uploadZeroFrames+" cancel="+uploadCancels+" packed="+packedFaces+" pavementReuse="+pavementReuse+" detailReuse="+detailReuse+" lightChecks="+lightReadChecks+" lightPositions="+lightReadPositions+" lightUnchanged="+lightReadUnchanged+" lightHashes="+lightHashes+" lightBytes="+lightBytes+" candidateChecks="+buildCandidateChecks+" "+RoadUploadBudget.metrics()+(p==null?" idle":" pendingMs="+((System.nanoTime()-p.started)/1000000)+" batch="+p.batchIndex+" face="+p.faceIndex);}
   private static Mesh furniturePreview;
+  private record FurnitureResult(List<RoadSurface.Face> faces,RoadPreviewGround.Sources ground,String failure){}
+  private static final LatestPlanningTask<FurnitureResult> furnitureTask=new LatestPlanningTask<>("SR-furniture-preview");
+  private static RoadPreviewSnapshot furnitureSnapshot;
+  private static boolean furnitureRunning;
+  private static long furnitureGeneration;
   private static final Map<Mesh,com.sora.splineroads.world.RoadRecord> previewRecords=new IdentityHashMap<>();
   private static long previewContextRevision,furnitureContextRevision=Long.MIN_VALUE;
   /** Publish the editor's resolved candidates in one step. A split fragment's
@@ -1468,15 +1474,24 @@ public final class RoadRenderer {
   }
 
   private static void clearPreviewFurniture(){
+    furnitureTask.cancel();furnitureGeneration++;furnitureSnapshot=null;furnitureRunning=false;
     furniturePreview=null;furnitureGround=null;furnitureRevision=furnitureContextRevision=Long.MIN_VALUE;furnitureFaces=List.of();furnitureFailure="";
   }
   private static List<RoadSurface.Face> previewFurniture(Mesh mesh) {
     var level = Minecraft.getInstance().level;
     long revision = ClientRoads.INDEX.revision();
-    boolean same=furniturePreview==mesh&&furnitureRevision==revision&&furnitureContextRevision==previewContextRevision
-        &&furnitureGround!=null&&furnitureGround.sameLevel(level);
-    if(same&&furnitureGround.current(level)){previewFurnitureStatus(mesh);return furnitureFaces;}
-    var retained=same?furnitureGround:null;
+    if(level==null)return List.of();
+    boolean same=furniturePreview==mesh&&furnitureRevision==revision&&furnitureContextRevision==previewContextRevision;
+    if(same&&furnitureRunning){previewFurnitureStatus(mesh);return furnitureFaces;}
+    if(same&&furnitureGround==null&&furnitureSnapshot==null&&!furnitureFailure.isEmpty()){previewFurnitureStatus(mesh);return furnitureFaces;}
+    if(same&&furnitureGround!=null&&furnitureGround.current(level)){previewFurnitureStatus(mesh);return furnitureFaces;}
+    if(!same||furnitureSnapshot==null){
+      clearPreviewFurniture();furniturePreview=mesh;furnitureRevision=revision;furnitureContextRevision=previewContextRevision;
+      furnitureSnapshot=new RoadPreviewSnapshot(level,mesh);furnitureFailure="正在读取设施预览地形…";
+    }
+    if(!furnitureSnapshot.step(level)){previewFurnitureStatus(mesh);return furnitureFaces;}
+    var snapshot=furnitureSnapshot;furnitureSnapshot=null;furnitureRunning=true;
+    long generation=furnitureGeneration;
     furniturePreview = mesh;
     furnitureRevision = revision;
     furnitureContextRevision=previewContextRevision;
@@ -1501,12 +1516,17 @@ public final class RoadRenderer {
     if(candidate!=null)edited=candidate.id();
     var fixed=candidate==null||candidate.fragment()==null?null:candidate.fragment().supports();
     var reference=candidate==null?null:candidate.terrainClassificationMesh();
-    var ground = RoadPreviewGround.create(level,mesh,edited,ClientRoads.INDEX.roads.values(),retained,fixed,reference,candidate);
+    UUID selected=edited;
+    var records=ClientRoads.INDEX.roads.values().stream().map(r->r.record).toList();
+    var draft=ClientRoads.draft==null?null:ClientRoads.draft.copy();
+    furnitureFailure="正在后台计算设施预览…";
+    furnitureTask.submit(()->{
+    var roads=records.stream().map(com.sora.splineroads.world.RoadIndex.Built::loading).toList();
+    var ground = RoadPreviewGround.create(level,mesh,selected,roads,null,fixed,reference,candidate).snapshot(snapshot);
     try {
       var phase = com.sora.splineroads.core.RoadFurniture.Phase.DEFAULT;
-      var draft = ClientRoads.draft;
       if(candidate!=null){
-        var resolved=candidate.furniturePhase(com.sora.splineroads.world.FurnitureSpacing.resolve(candidate,mesh,ClientRoads.INDEX.roads.values()));
+        var resolved=candidate.furniturePhase(com.sora.splineroads.world.FurnitureSpacing.resolve(candidate,mesh,roads));
         phase=com.sora.splineroads.world.FurnitureSpacing.onMesh(resolved,mesh);
       }else if (draft != null && draft.contains("A") && draft.contains("B")) {
         var start = new Node(mesh.first().center(),
@@ -1519,26 +1539,26 @@ public final class RoadRenderer {
             draft.hasUUID("Id") ? draft.getUUID("Id") : new UUID(0, 0), new UUID(0, 0),
             BlockPos.of(draft.getLong("A")), BlockPos.of(draft.getLong("B")), start, end, mesh.settings());
         record = record.furniturePhase(com.sora.splineroads.world.FurnitureSpacing.resolve(
-            record, mesh, ClientRoads.INDEX.roads.values()));
+            record, mesh, roads));
         phase = com.sora.splineroads.world.FurnitureSpacing.onMesh(record, mesh);
       }
-      var parts =
-          com.sora.splineroads.core.RoadStructures.plan(
-              mesh,
-              ground, phase);
+      var resolved=RoadStreetscape.resolve(mesh,ground);
+      var parts=RoadAutoTunnels.enclose(resolved,ground,RoadStructures.plan(resolved,ground,phase));
+      parts=RoadRailSlabClipping.clip(parts,roads.stream().filter(r->!r.record.id().equals(selected)&&com.sora.splineroads.world.RoadIndex.overlapXZ(resolved,r.mesh,3)).map(r->r.mesh).toList());
       List<RoadSurface.Face> faces = new ArrayList<>();
-      for (var part : RoadSignVisibility.parts(mesh,parts)) faces.addAll(part.faces());
-      return furnitureFaces = List.copyOf(faces);
+      for (var part : RoadSignVisibility.parts(resolved,parts)){RoadPlanningBudget.check();if(snapshot.visible(part))faces.addAll(part.faces());}
+      return new FurnitureResult(List.copyOf(faces),ground.sources(),"");
     } catch (IllegalArgumentException e) {
-      furnitureFaces = List.of();
-      furnitureFailure = ground.incomplete()?"正在等待桥墩基础附近地形加载…":"设施预览无效：" + e.getMessage();
-      return furnitureFaces;
-    } finally {
-      // Keep actual column results across equal terrain reloads and same-key
-      // replans, without retaining nearby meshes or strong chunk references.
-      furnitureGround = ground.sources();
-      previewFurnitureStatus(mesh);
+      return new FurnitureResult(List.of(),ground.sources(),ground.incomplete()?"正在等待桥墩基础附近地形加载…":"设施预览无效："+e.getMessage());
     }
+    },(result,failure)->Minecraft.getInstance().execute(()->{
+      if(generation!=furnitureGeneration||Minecraft.getInstance().level!=level)return;
+      furnitureRunning=false;
+      if(failure==null){furnitureFaces=result.faces();furnitureGround=result.ground();furnitureFailure=result.failure();}
+      else {furnitureFaces=List.of();furnitureFailure="设施预览失败："+failure.getMessage();}
+      previewFurnitureStatus(mesh);
+    }));
+    previewFurnitureStatus(mesh);return furnitureFaces;
   }
 
   /** Shared final GPU submission. Solid undersides retain their authored outward winding. */
