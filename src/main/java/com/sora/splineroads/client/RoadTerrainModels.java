@@ -645,7 +645,7 @@ public final class RoadTerrainModels {
         base=layer==null||model.getRenderTypes(material,layerRandom,materialData).contains(layer)?capQuads(model.getQuads(material,side,random,materialData,layer),cap):List.of();
         var edge=data.get(com.sora.splineroads.world.RoadFillEntity.EDGE);
         var outline=data.get(com.sora.splineroads.world.RoadFillEntity.OUTLINE);
-        if(edge!=null&&!edge.isEmpty()||outline!=null&&!outline.isEmpty()){
+        if(Boolean.TRUE.equals(data.get(com.sora.splineroads.world.RoadFillEntity.CUTOUT))||edge!=null&&!edge.isEmpty()||outline!=null&&!outline.isEmpty()){
           base=List.of();
           if(side==null&&(layer==null||model.getRenderTypes(material,RandomSource.create(material.getSeed(pos==null?BlockPos.ZERO:pos)),materialData).contains(layer))){
             var faces=new ArrayList<BakedQuad>(model.getQuads(material,null,random,materialData,layer));

@@ -1413,7 +1413,7 @@ public final class InterchangePlanner {
     var layout = RoadProfile.layout(main[axis], main[axis].width() + 2 * padding(axis));
     if (layout.catalog().type() == RoadProfile.Type.HIGHWAY)
       return Math.abs(layout.outer(layout.outside())) + (options.width() - 1) / 2;
-    return main[axis].width() / 2 + padding(axis) + options.width() / 2 - .2;
+    return ordinaryAttachmentEdge(axis) + options.width() / 2 - .2;
   }
 
   private double attachment(int axis) {
@@ -1421,7 +1421,15 @@ public final class InterchangePlanner {
       var layout = RoadProfile.layout(main[axis], main[axis].width() + 2 * padding(axis));
       return Math.abs(layout.outer(layout.outside())) + layout.shoulderWidth() / 2;
     }
-    return main[axis].width() / 2 + padding(axis) - .2 + portWidth(axis) / 2;
+    return ordinaryAttachmentEdge(axis) - .2 + portWidth(axis) / 2;
+  }
+
+  /** Ramps merge with motor traffic. Attaching outside the bicycle verge left
+   * an isolated ramp lane on the footway, fenced off from the carriageway. */
+  private double ordinaryAttachmentEdge(int axis){
+    var layout=RoadProfile.layout(main[axis],main[axis].width()+2*padding(axis));
+    return layout.cycleWidth()>.01?Math.max(Math.abs(layout.motorMin()),Math.abs(layout.motorMax()))
+        :main[axis].width()/2+padding(axis);
   }
 
   private double portWidth(int axis) {

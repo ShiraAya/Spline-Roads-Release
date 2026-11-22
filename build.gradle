@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.sora.splineroads'
-version = '2.1.1'
+version = '2.1.2-fix1'
 base { archivesName = 'splineroads' }
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
@@ -26,7 +26,7 @@ sourceSets {
 tasks.register('validateFix1', JavaExec) {
     dependsOn validationClasses
     classpath = sourceSets.validation.runtimeClasspath
-    mainClass = 'com.sora.splineroads.world.Feedback212Inspection'
+    mainClass = 'com.sora.splineroads.world.Feedback212Core'
     args project.findProperty('feedbackWorld') ?: 'F:/SR-feedback-2.1.2-fix1/world/data/splineroads.dat'
     jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
 }
@@ -38,18 +38,28 @@ minecraft {
         configureEach {
             workingDirectory project.file(project.findProperty('roadRunDir') ?: 'run')
             property 'forge.logging.console.level', 'info'
-            if (project.hasProperty('roadMtr')) {
+            if (project.hasProperty('roadMtr') || project.hasProperty('roadEmbeddiumDir') || project.hasProperty('roadOculusDir')) {
                 property 'mixin.env.remapRefMap', 'true'
                 property 'mixin.env.refMapRemappingFile', project.layout.buildDirectory.file('createSrgToMcp/output.srg').get().asFile.absolutePath
             }
             mods { splineroads { source sourceSets.main } }
         }
-        client {}
+        client {
+            if (project.hasProperty('feedback212Client')) {
+                mods { splineroads { source sourceSets.gameTest } }
+                property 'road.feedback212Client', 'true'
+                if (project.hasProperty('feedback212CutVisual')) property 'road.feedback212CutVisual', 'true'
+                jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
+            }
+        }
         server {
             args '--nogui'
             if (project.hasProperty('feedbackFix1')) {
                 mods { splineroads { source sourceSets.gameTest } }
                 property 'road.feedbackFix1', 'true'
+                if (project.hasProperty('feedback212Edit')) property 'road.feedback212Edit', 'true'
+                if (project.hasProperty('feedback212Reload')) property 'road.feedback212Reload', 'true'
+                if (project.hasProperty('feedback212Cuts')) property 'road.feedback212Cuts', 'true'
                 jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
             }
         }

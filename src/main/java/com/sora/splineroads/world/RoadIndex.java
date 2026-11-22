@@ -183,6 +183,9 @@ public final class RoadIndex {
       for(var air:cycleAir())if(air.intersects(p.getX(),p.getY(),p.getZ(),1))return true;
       if(record.settings().structure()==Structure.TUNNEL)return RoadTunnelSpace.intersects(mesh,p.getX(),p.getY(),p.getZ(),1);
       if(autoProfile().intersects(p.getX(),p.getY(),p.getZ(),1))return true;
+      // Open cuts reserve the same driving interior as roofed tunnels. Merely
+      // reserving headroom left retained sandstone in diagonal wall cells.
+      if(cutProfile().intersects(p.getX(),p.getY(),p.getZ(),1))return true;
       for(var tube:automaticTubes())if(RoadTunnelSpace.intersects(tube,p.getX(),p.getY(),p.getZ(),1))return true;
       return false;
     }

@@ -21,12 +21,12 @@ public final class JunctionPlanner {
     private final List<OneSidedJunction.Cut> hostCuts;
     private final int triangleWalls;
     private final List<Mesh> approaches,slips,refuges;private final Piece resolved;private final List<V> boundary;private final JunctionSignalCycle signals;private final Map<Part,JunctionSignals.Head> heads;private final Map<RoadSidewalks.Cell,RoadSidewalks.Config> sidewalks;
-    public Ref(JunctionSpec spec,int piece){this(spec,piece,56);}
+    public Ref(JunctionSpec spec,int piece){this(spec,piece,57);}
     public Ref(JunctionSpec spec,int piece,int version){
       this(spec,piece,version,List.of());
     }
     public Ref(JunctionSpec spec,int piece,int version,List<OneSidedJunction.Cut> hostCuts){
-      if(version<21||version>56||piece<0)throw new IllegalArgumentException("路口分段无效");
+      if(version<21||version>57||piece<0)throw new IllegalArgumentException("路口分段无效");
       if(version>=50)spec=spec.supportedCrossings();
       var plan=plan(spec,version);if(piece>=plan.pieces().size())throw new IllegalArgumentException("路口分段无效");
       retainedPlan=plan;
@@ -99,7 +99,7 @@ public final class JunctionPlanner {
   private static long planBytes(Plan p){long bytes=4096+p.boundary().size()*64L+p.sidewalks().size()*128L+p.heads().size()*256L;
     for(var piece:p.pieces()){bytes+=piece.mesh().samples().size()*256L+piece.structures().size()*512L;for(var face:piece.paint())bytes+=128+face.points().size()*64L;}
     for(var movement:p.movements())bytes+=128+movement.path().size()*64L;return bytes;}
-  public static Plan plan(JunctionSpec s) {return plan(s,56);}
+  public static Plan plan(JunctionSpec s) {return plan(s,57);}
   private static Plan plan(JunctionSpec s,int version) {
     var key=new PlanKey(s,version);
     synchronized(LIVE){var ref=LIVE.get(key);var plan=ref==null?null:ref.get();if(plan!=null)return plan;}
@@ -165,7 +165,10 @@ public final class JunctionPlanner {
     return build(source,geometryVersion,false);
   }
   private static Plan build(JunctionSpec source,int geometryVersion,boolean singleArrowRow) {
-    if(source.oneSide()!=null){if(geometryVersion<51)throw new IllegalArgumentException("单边路口需要几何版本51");return OneSidedJunction.apply(source,build(OneSidedJunction.prepare(source),geometryVersion,geometryVersion>=54));}
+    return build(source,geometryVersion,singleArrowRow,null);
+  }
+  private static Plan build(JunctionSpec source,int geometryVersion,boolean singleArrowRow,OneSidedJunction.Source host) {
+    if(source.oneSide()!=null){if(geometryVersion<51)throw new IllegalArgumentException("单边路口需要几何版本51");return OneSidedJunction.apply(source,build(OneSidedJunction.prepare(source),geometryVersion,geometryVersion>=54,geometryVersion>=57?source.oneSide():null));}
     final JunctionSpec s=geometryVersion>=50?source.supportedCrossings():geometryVersion>=39&&geometryVersion<47?source.arms(source.arms().stream().map(JunctionPlanner::bridgeArm).toList()):source;
     int n=s.arms().size();
     var sides=new JunctionSides(s,geometryVersion>=35);List<Integer> order=sides.order;
@@ -207,7 +210,13 @@ public final class JunctionPlanner {
       }
       var approachSettings=settings(a.width(),s.thickness()).options(RoadProfile.Options.DEFAULT.sidewalk(a.external().options().sidewalk()).streetscape(a.external().options().streetscape()));
       if(geometryVersion>=47)approachSettings=approachSettings.structure(a.external().structure()).options(a.external().options().traffic(s.leftTraffic()).lanePoints(LanePoints.Data.EMPTY));
-      approaches.add(RoadRibbon.mesh(samples,approachSettings)); mouths.add(end);
+      Mesh approach=RoadRibbon.mesh(samples,approachSettings);
+      if(host!=null&&i<2){
+        approach=OneSidedJunction.hostApproach(host,i,end,approachSettings);
+        end=approach.last().center();
+        sides.outward.set(i,approach.last().left().left());
+      }
+      approaches.add(approach); mouths.add(end);
     }
     var movement=new ArrayList<Movement>(); var guides=new ArrayList<Face>();
     for(int i=0;i<n;i++)for(int lane=0;lane<s.arms().get(i).incoming();lane++) {
@@ -228,7 +237,7 @@ public final class JunctionPlanner {
         if(dest<0)dest=Math.min(lane,b.outgoing()-1);
         if(geometryVersion>=49&&JunctionSlips.receives(s,target))dest=Math.min(dest,b.outgoing()-2);
         if(dest>=b.outgoing())throw new IllegalArgumentException("目标出口车道不存在");
-        V f=radial(s,i).mul(-1),g=radial(s,target),p=mouths.get(i).add(f.left().mul(a.laneCenter(true,lane,s.leftTraffic()))),q=mouths.get(target).add(g.mul(-1).left().mul(b.laneCenter(false,dest,s.leftTraffic())));
+        V f=(host==null?radial(s,i):sides.outward.get(i)).mul(-1),g=host==null?radial(s,target):sides.outward.get(target),p=mouths.get(i).add(f.left().mul(a.laneCenter(true,lane,s.leftTraffic()))),q=mouths.get(target).add(g.mul(-1).left().mul(b.laneCenter(false,dest,s.leftTraffic())));
         var path=new ArrayList<V>();
         if(s.kind()==Kind.ROUNDABOUT) {
           double rr=s.islandRadius()+(Math.min(lane,s.ringLanes()-1)+.5)*s.ringLaneWidth();

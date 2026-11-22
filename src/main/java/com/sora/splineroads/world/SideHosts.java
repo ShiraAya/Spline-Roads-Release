@@ -63,7 +63,7 @@ final class SideHosts {
     // The common source includes all markers added since the first connection.
     var source=spec.oneSide();spec=spec.oneSide(new OneSidedJunction.Source(original.mesh(),original.structures(),source.from(),source.to(),source.side()));
     var cuts=all.stream().map(u->u.spec().oneSide()).map(s->new OneSidedJunction.Cut(s.from(),s.to(),s.side())).toList();
-    var plan=JunctionPlanner.plan(spec);return original.junction(owner.group(),new JunctionPlanner.Ref(spec,plan.pieces().size()-1,54,cuts));
+    var plan=JunctionPlanner.plan(spec);return original.junction(owner.group(),new JunctionPlanner.Ref(spec,plan.pieces().size()-1,57,cuts));
   }
   static void remove(ServerLevel level,ServerPlayer player,UUID group){
     if(JunctionPointConnections.saved(RoadData.get(level),group)){JunctionPointConnections.remove(level,player,group);return;}

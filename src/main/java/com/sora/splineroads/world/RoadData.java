@@ -1271,7 +1271,12 @@ public final class RoadData extends SavedData {
   List<RoadRecord> splitJunctionStructures(ServerLevel level,List<RoadRecord> roads,UUID replaced){
     var all=new ArrayList<RoadIndex.Built>();for(var r:index.roads.values())if(!r.record.id().equals(replaced)&&roads.stream().noneMatch(n->n.id().equals(r.record.id())))all.add(r);
     var built=roads.stream().map(RoadIndex.Built::new).toList();all.addAll(built);var out=new ArrayList<RoadRecord>();var cache=new RoadTerrain.Cache(terrainFill,terrainOriginal);var lookup=new RoadPlanningIndex(all);
-    try(var chunks=RoadWorkChunks.open(level)){chunks.roads(built);for(var r:built)out.add(r.record.junction()==null?r.record:StructurePlanner.plan(level,r,all,terrainFill,terrainOriginal,cache,lookup));}return List.copyOf(out);
+    try(var chunks=RoadWorkChunks.open(level)){chunks.roads(built);for(var r:built){
+      // AutoJunctions creates the trimmed ordinary halves from geometry headers.
+      // Those headers have no furniture; they need the same planning as the pad.
+      out.add(r.record.junction()==null&&!r.record.structures().isEmpty()?r.record:
+          StructurePlanner.plan(level,r,all,terrainFill,terrainOriginal,cache,lookup));
+    }}return List.copyOf(out);
   }
   record SplitPrepared(PreparedEdit edit,long revision,Map<UUID,RoadRecord> dependencies){int cells(){return edit.touched().size();}}
   private boolean exactSplit;
@@ -2029,8 +2034,7 @@ public final class RoadData extends SavedData {
             : roadBody ? collisionState(key, state, body.get(key), sidewalks.get(key),dry.contains(key),finalByChunk.getOrDefault(new net.minecraft.world.level.ChunkPos(p).toLong(),List.of())) : walkway ? sidewalks.get(key) : dry.contains(key)?SplineRoads.TUNNEL_AIR.get().defaultBlockState():Blocks.AIR.defaultBlockState();
         if (state.equals(target) && !(target.is(SplineRoads.FILLED_COLLIDER.get())
             && level.getBlockEntity(p) instanceof RoadFillEntity fill
-            && (!fill.fill().equals(material)||!fill.edge().equals(edge.boxes())||!fill.outline().equals(edge.polygons())
-                ||Math.abs(fill.cap()-GroundTerrainJoin.cap(p,material,localRoads))>1e-8))) continue;
+            && !fill.matches(material,GroundTerrainJoin.cap(p,material,localRoads),localRoads))) continue;
         RoadClearing.validate(level,p,state,state.equals(sidewalkPlaced.get(key)));
         writes.put(key, target);
       }
@@ -2279,6 +2283,13 @@ public final class RoadData extends SavedData {
     if(terrainCap<1){fill=RoadBlocks.Fill.NONE;generic=GroundTerrainJoin.usable(terrainCap);}
     boolean cycleBody=roads.stream().anyMatch(r->r.cycleBodyAt(p));
     if(dryInterior||cycleBody){fill=RoadBlocks.Fill.NONE;generic=false;}
+    // A built-in terrain fill is a whole cube. Beside a diagonal lining/walk
+    // it protrudes through the visible face; use the persisted exact cutout.
+    if(!dryInterior&&!cycleBody&&(generic||fill!=RoadBlocks.Fill.NONE)
+        &&roads.stream().anyMatch(r->r.shellAt(p)||r.prepareCollision().structureAt(
+          new RoadRaster.Cell(p.getX(),p.getY(),p.getZ()),com.sora.splineroads.core.RoadSidewalks::smoothPart))){
+      fill=RoadBlocks.Fill.NONE;generic=true;
+    }
     if(!dryInterior&&!cycleBody&&RailbedTerrainEdge.present(p,terrain,nearby)){fill=RoadBlocks.Fill.NONE;generic=true;}
     // Keep water only in exterior partial-shell cells, never in an interior clearance
     // cell or the actual road slab. The caller supplies the union of ALL tunnel air

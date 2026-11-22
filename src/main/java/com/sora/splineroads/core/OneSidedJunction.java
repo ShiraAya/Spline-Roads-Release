@@ -107,6 +107,22 @@ public final class OneSidedJunction {
     return List.copyOf(out);
   }
   public static List<Part> generatedParts(Source source,List<Part> parts){return parts(parts,masks(source).retained());}
+  /** The generated half and the retained half must share the original curve.
+   * A second Bezier fit drifts across the intact median on curved hosts. */
+  static Mesh hostApproach(Source source,int arm,V mouth,Settings settings){
+    double end=RoadQueries.horizontal(source.road(),mouth).sample().distance();
+    double start=arm==0?source.from():source.to();
+    if(arm==0?end<=start+1:end>=start-1)throw new IllegalArgumentException("单边路口主路接入段过短，请拉开接入范围");
+    var points=new ArrayList<Sample>();
+    points.add(RoadSlicing.at(source.road(),start));
+    for(var p:source.road().samples())if(p.distance()>Math.min(start,end)+1e-8&&p.distance()<Math.max(start,end)-1e-8)points.add(p);
+    points.add(RoadSlicing.at(source.road(),end));
+    points.sort(Comparator.comparingDouble(Sample::distance));
+    if(arm==1)Collections.reverse(points);
+    var local=new ArrayList<Sample>();
+    for(var p:points)local.add(new Sample(p.center(),p.left().mul(arm==0?1:-1),Math.abs(p.distance()-start),p.halfWidth()));
+    return RoadSlicing.mesh(local,settings);
+  }
   public static boolean retainedPiece(JunctionPlanner.Ref ref){return ref.spec().oneSide()!=null&&ref.get().arm()==-3;}
   /** Shared host pavement is clipped once for every independent side connection. */
   public static Piece retained(Source original,List<Cut> cuts){
