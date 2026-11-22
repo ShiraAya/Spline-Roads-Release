@@ -11,6 +11,26 @@ base { archivesName = 'splineroads' }
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
 
+sourceSets {
+    gameTest {
+        java.setSrcDirs(['src/gametest/java'])
+        compileClasspath += main.output + main.compileClasspath
+        runtimeClasspath = output + main.output + main.runtimeClasspath
+    }
+    validation {
+        java.setSrcDirs(['src/validation/java'])
+        compileClasspath += main.output + main.compileClasspath
+        runtimeClasspath += output + compileClasspath + main.runtimeClasspath
+    }
+}
+tasks.register('validateFix1', JavaExec) {
+    dependsOn validationClasses
+    classpath = sourceSets.validation.runtimeClasspath
+    mainClass = 'com.sora.splineroads.world.Feedback212Inspection'
+    args project.findProperty('feedbackWorld') ?: 'F:/SR-feedback-2.1.2-fix1/world/data/splineroads.dat'
+    jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
+}
+
 minecraft {
     mappings channel: 'official', version: '1.20.1'
     copyIdeResources = true
@@ -25,7 +45,14 @@ minecraft {
             mods { splineroads { source sourceSets.main } }
         }
         client {}
-        server { args '--nogui' }
+        server {
+            args '--nogui'
+            if (project.hasProperty('feedbackFix1')) {
+                mods { splineroads { source sourceSets.gameTest } }
+                property 'road.feedbackFix1', 'true'
+                jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
+            }
+        }
     }
 }
 

@@ -32,7 +32,7 @@ public final class JunctionCodec {
     if(s.oneSide()!=null){var source=s.oneSide();var mesh=source.road();var p=new CompoundTag();
       var record=new RoadRecord(new UUID(0,0),new UUID(0,0),net.minecraft.core.BlockPos.ZERO,net.minecraft.core.BlockPos.ZERO,new Node(mesh.first().center(),0,0),new Node(mesh.last().center(),0,0),mesh.settings()).alignment(null,mesh).structures(source.structures());
       record=record.fragment(new RoadSlicing.Fragment(new UUID(0,0),0,mesh.length(),RoadSlicing.Connection.CONTINUOUS,mesh.settings().options().attachments(),mesh.slicing()==null?new RoadSlicing.Geometry(List.of()):mesh.slicing()));
-      p.put("Road",record.save());p.putDouble("From",source.from());p.putDouble("To",source.to());p.putInt("Side",source.side());t.put("OneSide",p);t.putBoolean("MainAdvancePolicy",true);
+      p.put("Road",record.save());p.putDouble("From",source.from());p.putDouble("To",source.to());p.putInt("Side",source.side());t.put("OneSide",p);t.putBoolean("MainAdvancePolicy",true);t.putBoolean("BranchAdvancePolicy",true);
     }return t;
   }
   public static JunctionSpec read(CompoundTag t) {
@@ -49,7 +49,9 @@ public final class JunctionCodec {
     if(source!=null&&arms.size()==3){
       for(int i=0;i<3;i++){
         var arm=arms.get(i);
-        boolean enabled=i==source.incoming()&&arms.get(2).outgoing()>0&&(!t.getBoolean("MainAdvancePolicy")||arm.advanceSign());
+        // The main-road restriction does not apply to the entering side road.
+        boolean enabled=i==2?arm.incoming()>0&&(!t.getBoolean("BranchAdvancePolicy")||arm.advanceSign()):
+            i==source.incoming()&&arms.get(2).outgoing()>0&&(!t.getBoolean("MainAdvancePolicy")||arm.advanceSign());
         arms.set(i,arm.signs(enabled,arm.nameSign()));
       }
     }

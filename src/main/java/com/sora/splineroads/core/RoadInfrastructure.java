@@ -298,6 +298,12 @@ public final class RoadInfrastructure {
     var relocated=gap?List.<Part>of():RoadSupports.portal(portalSample,mesh.settings().thickness(),depth,
         portal?portalSample.halfWidth()+1.4:portalSample.halfWidth()*.62,shaftWidth,ground);
     if(!relocated.isEmpty()){out.addAll(relocated);return;}
+    // A wider lower boulevard can exclude both outboard legs while leaving a
+    // safe median bearing. Keep all existing foundation and clearance checks.
+    if(style==Bridge.OVERPASS&&!gap){
+      var median=RoadSupports.clearStandard(portalSample,mesh.settings().thickness()+Math.max(0,depth-.8),ground);
+      if(!median.isEmpty()&&median.stream().noneMatch(ground::blocked)){out.addAll(median);return;}
+    }
     // Missing foundations are optional; never relax the solid/clearance checks of placed parts.
     Sample s=sample(mesh,station);double floor=ground.top(s.center().x(),s.center().z(),s.center().y());
     if(!Double.isFinite(floor)||s.center().y()-floor>mesh.settings().thickness()+depth+1)

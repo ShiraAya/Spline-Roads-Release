@@ -1278,7 +1278,9 @@ public final class RoadRenderer {
         // relighting briefly, then restore full progress for an older upload.
         if(pendingUpload.lightingOnly&&pendingUpload.section.revision==pendingUpload.revision
             &&now-pendingUpload.started<150_000_000L)budget=Math.min(budget,300_000L);
-        uploads=pendingUpload.step(now+budget);
+        V eye=cameraPosition;
+        try { uploads=pendingUpload.step(now+budget); }
+        finally { cameraPosition=eye; }
         if(before==packedFaces&&uploads==0&&!pendingUpload.complete)uploadZeroFrames++;
         if(pendingUpload.complete)pendingUpload=null;}
       catch(RuntimeException failure){pendingUpload.cancel();pendingUpload=null;ClientRoads.error="道路网格上传失败："+failure.getMessage();}

@@ -79,6 +79,13 @@ public final class RoadSidewalks {
       for(int i=1;i<offsets.length;i++)offsets[i]=Math.max(offsets[i],offsets[i-1]-.3*(samples.get(i).distance()-samples.get(i-1).distance()));
       for(int i=offsets.length-2;i>=0;i--)offsets[i]=Math.max(offsets[i],offsets[i+1]-.3*(samples.get(i+1).distance()-samples.get(i).distance()));
       for(int i=1;i<samples.size();i++){var a=samples.get(i-1);var b=samples.get(i);V na=a.left().mul(side),nb=b.left().mul(side);
+        if(ground!=null&&mesh.settings().structure()==Structure.AUTO){
+          var mid=RoadStructures.sample(mesh,(a.distance()+b.distance())/2);
+          // Even a shallow cut can bury a footway before the two-metre wall
+          // threshold is reached. Test its actual outside terrain separately.
+          if(RoadStreetscape.underground(mesh,mid.distance())||RoadStreetscape.cut(mesh,mid,side)
+              ||buriedWalk(mesh,config,mid,side,ground))continue;
+        }
         double wa=walkWidth(mesh,config,a,side),wb=walkWidth(mesh,config,b,side);
         double da=Math.max(0,offsets[i-1]-normal),db=Math.max(0,offsets[i]-normal);
         double ta=tactileScale(mesh,config,a,side),tb=tactileScale(mesh,config,b,side);
@@ -114,6 +121,15 @@ public final class RoadSidewalks {
     return base+(walkValue(endWalk(e.start(),c),side,tactile)-base)*a+(walkValue(endWalk(e.end(),c),side,tactile)-base)*b;
   }
   public static double walkWidth(Mesh m,Config c,Sample s,int side){return walkBlend(m,c,s,side,false);}
+  static boolean buriedWalk(Mesh mesh,Config config,Sample at,int side,RoadStructures.Ground ground){
+    double width=walkWidth(mesh,config,at,side);
+    for(double fraction:new double[]{.05,.5,.95}){
+      V p=at.at(side*(at.halfWidth()+width*fraction),0);
+      double surface=ground.surface(p.x(),p.z(),p.y());
+      if(Double.isFinite(surface)&&surface>p.y()+.25)return true;
+    }
+    return false;
+  }
   public static double tactileScale(Mesh m,Config c,Sample s,int side){return walkBlend(m,c,s,side,true);}
   private static void walkwayTerminals(List<RoadStructures.Part> out){
     var endpoints=new LinkedHashMap<V,Integer>();

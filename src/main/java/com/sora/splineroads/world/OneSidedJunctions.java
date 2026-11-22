@@ -87,6 +87,7 @@ public final class OneSidedJunctions {
       var link=links.get(0);if(!AutoJunctions.ordinary(link.record))throw new IllegalArgumentException("支路须为普通道路端点");if(player!=null)RoadData.requireOwner(player,link.record.owner());
       boolean first=branch.equals(link.record.a());var sample=first?link.mesh.first():link.mesh.last();inward=sample.left().left().mul(first?1:-1);
       profile=RoadEndpointSections.orient(link.record.settings().taper(sample.halfWidth()*2,sample.halfWidth()*2),first);
+      profile=withPort(profile,link.mesh,sample,first);
       if(!RoadProfile.catalog(profile.style()).twoWay()&&incoming==first)throw new IllegalArgumentException("所选 A→B 与现有单行支路方向冲突，请按行驶方向重新选择");
       incoming=!first;node=new Node(sample.center(),RoadPlanner.yaw(inward),(first?-1:1)*(first?link.record.start():link.record.end()).grade());
       t.putUUID("BranchRoad",link.record.id());t.putInt("BranchSignature",link.record.header().hashCode());
@@ -106,10 +107,11 @@ public final class OneSidedJunctions {
     for(int i=0;i<2;i++){
       var port=RoadSlicing.at(mesh,i==0?from:to);V f=port.left().left().mul(i==0?-1:1);
       var section=section(RoadEndpointSections.orient(original.settings().taper(port.halfWidth()*2,port.halfWidth()*2),i==1));
+      section=withPort(section,mesh,port,i==1);
       double d=.1;var before=RoadSlicing.at(mesh,Math.max(0,port.distance()-d));var after=RoadSlicing.at(mesh,Math.min(mesh.length(),port.distance()+d));double grade=(after.center().y()-before.center().y())/Math.max(1e-7,after.center().sub(before.center()).horizontalLength())*(i==0?1:-1);
       arms.add(JunctionSpec.arm(new Node(port.center(),RoadPlanner.yaw(f),grade),f,section,true,i).attached(true).crossing(false).signs(i==(side>0?0:1),false));
     }
-    arms.add(JunctionSpec.arm(node,inward,profile,incoming,2).attached(!links.isEmpty()).signs(false,true));
+    arms.add(JunctionSpec.arm(node,inward,profile,incoming,2).attached(!links.isEmpty()).signs(true,true));
     if(previous!=null)for(int i=0;i<3;i++){
       var old=previous.arms().get(i);var a=arms.get(i);
       if((i!=2||!t.contains("ConnectionSettings"))&&(a.incoming()!=old.incoming()||a.outgoing()!=old.outgoing()||a.width()!=old.width()))throw new IllegalArgumentException("接入道路断面已变化，请重新建立单边路口");
@@ -167,5 +169,14 @@ public final class OneSidedJunctions {
     return requested;
   }
   private static Settings section(Settings s){return s.options(s.options().lanePoints(LanePoints.Data.EMPTY).attachments(RoadAttachments.Data.EMPTY));}
+  static Settings withPort(Settings settings,Mesh mesh,Sample sample,boolean reverse){
+    var layout=RoadProfile.layout(mesh,sample);double sign=reverse?-1:1;
+    var port=new RoadTransitions.Port(reverse?-layout.motorMax():layout.motorMin(),
+        reverse?-layout.motorMin():layout.motorMax(),layout.median(),
+        layout.dividers().stream().map(d->sign*d).sorted().toList(),
+        Math.max(0,RoadProfile.curbExtent(layout,sample,reverse?-1:1)),
+        Math.max(0,RoadProfile.curbExtent(layout,sample,reverse?1:-1)),sign*layout.medianCenter());
+    return settings.options(settings.options().ends(settings.options().ends().port(port)));
+  }
   private OneSidedJunctions(){}
 }
