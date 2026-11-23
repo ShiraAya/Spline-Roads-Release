@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.sora.splineroads'
-version = '2.1.2-fix5'
+version = '2.1.2-fix6'
 base { archivesName = 'splineroads' }
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
@@ -67,6 +67,37 @@ tasks.register('validateFix4Saved', JavaExec) {
     jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
 }
 
+tasks.register('measureFix6', JavaExec) {
+    dependsOn validationClasses
+    classpath = sourceSets.validation.runtimeClasspath
+    mainClass = 'com.sora.splineroads.world.FeedbackFix6Memory'
+    args 'F:/SR-feedback-2.1.2-fix6/feedback-original.dat'
+    args 'F:/SR-feedback-2.1.2-fix6/' + (project.findProperty('feedbackStage') ?: 'after') + '-histogram.txt'
+    jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
+}
+tasks.register('validateFix6Memory', JavaExec) {
+    dependsOn validationClasses
+    classpath = sourceSets.validation.runtimeClasspath
+    mainClass = 'com.sora.splineroads.world.FeedbackFix6MemoryChecks'
+    args 'F:/SR-feedback-2.1.2-fix6/feedback-original.dat'
+    jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
+}
+tasks.register('validateFix6Saved', JavaExec) {
+    dependsOn validationClasses
+    classpath = sourceSets.validation.runtimeClasspath
+    mainClass = 'com.sora.splineroads.core.FeedbackFix6Saved'
+    args 'F:/SR-feedback-2.1.2-fix6-client/saves/fix6-regression/data/splineroads.dat'
+    jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
+}
+
+tasks.register('validateFix6', JavaExec) {
+    dependsOn validationClasses
+    classpath = sourceSets.validation.runtimeClasspath
+    mainClass = 'com.sora.splineroads.core.FeedbackFix6Core'
+    args project.findProperty('feedbackWorld') ?: 'F:/SR-feedback-2.1.2-fix6/feedback-original.dat'
+    args project.findProperty('feedbackStage') ?: 'after'
+    jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
+}
 tasks.register('validateFix5', JavaExec) {
     dependsOn validationClasses
     classpath = sourceSets.validation.runtimeClasspath
@@ -97,6 +128,12 @@ minecraft {
             mods { splineroads { source sourceSets.main } }
         }
         client {
+            if (project.hasProperty('feedbackFix6Client')) {
+                mods { splineroads { source sourceSets.gameTest } }
+                property 'road.feedbackFix6Client', 'true'
+                if (project.hasProperty('feedbackFix6Shots')) property 'road.feedbackFix6Shots', 'true'
+                jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
+            }
             if (project.hasProperty('feedbackFix5Client')) {
                 mods { splineroads { source sourceSets.gameTest } }
                 property 'road.feedbackFix5Client', 'true'
@@ -129,6 +166,11 @@ minecraft {
         }
         server {
             args '--nogui'
+            if (project.hasProperty('feedbackFix6')) {
+                mods { splineroads { source sourceSets.gameTest } }
+                property 'road.feedbackFix6', 'true'
+                jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
+            }
             if (project.hasProperty('feedbackFix5')) {
                 mods { splineroads { source sourceSets.gameTest } }
                 property 'road.feedbackFix5', 'true'

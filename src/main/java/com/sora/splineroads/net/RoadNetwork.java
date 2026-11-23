@@ -869,9 +869,11 @@ public final class RoadNetwork {
                     .toString()
                     .equals(tool.getTag().getString("Dimension"))))
           throw new IllegalArgumentException("立交端点选择失效，请重新选择");
-        String message = Interchanges.build(level, player, t);
-        tool.getOrCreateTag().remove("Points");
-        return message;
+        var command=t.copy();var selection=tool.getOrCreateTag().copy();
+        return backgroundEdit(player,command,ignored->Interchanges.build(level,null,command),()->{
+          // A player may select the next interchange while this job is running.
+          if(selection.equals(tool.getTag()))tool.getOrCreateTag().remove("Points");
+        });
       }
       case "interchangeDelete", "interchangeDeleteRamps" -> {
         requireGenerator(tool, t, data);

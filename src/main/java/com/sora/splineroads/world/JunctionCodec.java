@@ -7,6 +7,13 @@ import java.util.*;
 import net.minecraft.nbt.*;
 
 public final class JunctionCodec {
+  // Every saved junction piece carries the same host-road receipt. Share its
+  // immutable decoded source, without retaining worlds or dead decoded roads.
+  // Keys are private NBT copies and full equality is checked, including geometry.
+  private static final Map<CompoundTag,java.lang.ref.WeakReference<OneSidedJunction.Source>> SIDES=new LinkedHashMap<>(16,.75f,true);
+  private static long sideBytes;
+  private static int sideWeight(CompoundTag tag){return tag.sizeInBytes();}
+  public static synchronized void clearSources(){SIDES.clear();sideBytes=0;}
   /** Immutable road receipts are preview context, never client-supplied edit authority. */
   public static CompoundTag editCommand(CompoundTag payload){
     var command=payload.copy();command.remove("FreshSpec");
@@ -60,9 +67,23 @@ public final class JunctionCodec {
   private static OneSidedJunction.Source readSide(CompoundTag t){
     if(!t.contains("OneSide"))return null;var p=t.getCompound("OneSide");var saved=p.getCompound("Road");
     if(saved.contains("Junction")||saved.contains("Toll"))throw new IllegalArgumentException("单边路口主路快照无效");
+    synchronized(JunctionCodec.class){
+      for(var it=SIDES.entrySet().iterator();it.hasNext();){var entry=it.next();if(entry.getValue().get()==null){sideBytes-=sideWeight(entry.getKey());it.remove();}}
+      var ref=SIDES.get(p);var previous=ref==null?null:ref.get();if(previous!=null)return previous;
+    }
     var r=RoadRecord.load(saved);
     if(r.junction()!=null||r.toll()!=null)throw new IllegalArgumentException("单边路口主路快照无效");
-    return new OneSidedJunction.Source(r.mesh(),r.structures(),p.getDouble("From"),p.getDouble("To"),p.getInt("Side"));
+    var created=new OneSidedJunction.Source(r.mesh(),r.structures(),p.getDouble("From"),p.getDouble("To"),p.getInt("Side"));
+    synchronized(JunctionCodec.class){
+      var ref=SIDES.get(p);var previous=ref==null?null:ref.get();if(previous!=null)return previous;
+      int weight=sideWeight(p);
+      if(weight<=8*1024*1024){
+        if(SIDES.containsKey(p))sideBytes-=weight;
+        SIDES.put(p.copy(),new java.lang.ref.WeakReference<>(created));sideBytes+=weight;
+        for(var it=SIDES.entrySet().iterator();it.hasNext()&&(SIDES.size()>32||sideBytes>8*1024*1024);){var entry=it.next();sideBytes-=sideWeight(entry.getKey());it.remove();}
+      }
+    }
+    return created;
   }
   public static CompoundTag writeRef(JunctionPlanner.Ref ref){return writeRefDetails(ref,write(ref.spec()));}
   static CompoundTag writeSharedRef(JunctionPlanner.Ref ref,Map<JunctionSpec,Integer> shared,ListTag specs){

@@ -45,18 +45,18 @@ public final class RoadIndex {
    * while preserving the existing access order, null entries and strict limit. */
   static final class LongLru<V> extends AbstractMap<Long,V> {
     private final int limit;
-    private final it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap<V> entries=new it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap<>(128);
+    private it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap<V> entries;
     LongLru(int limit){this.limit=limit;}
-    public V get(long key){return entries.getAndMoveToLast(key);}
-    public boolean containsKey(long key){return entries.containsKey(key);}
-    public V put(long key,V value){var old=entries.putAndMoveToLast(key,value);if(entries.size()>limit)entries.removeFirst();return old;}
-    public V computeIfAbsent(long key,java.util.function.LongFunction<? extends V> factory){var old=entries.get(key);if(old!=null)return get(key);var value=factory.apply(key);if(value!=null)put(key,value);return value;}
+    public V get(long key){return entries==null?null:entries.getAndMoveToLast(key);}
+    public boolean containsKey(long key){return entries!=null&&entries.containsKey(key);}
+    public V put(long key,V value){if(entries==null)entries=new it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap<>(4);var old=entries.putAndMoveToLast(key,value);if(entries.size()>limit)entries.removeFirst();return old;}
+    public V computeIfAbsent(long key,java.util.function.LongFunction<? extends V> factory){var old=get(key);if(old!=null)return old;var value=factory.apply(key);if(value!=null)put(key,value);return value;}
     @Override public V get(Object key){return key instanceof Long value?get(value.longValue()):null;}
     @Override public boolean containsKey(Object key){return key instanceof Long value&&containsKey(value.longValue());}
     @Override public V put(Long key,V value){return put(key.longValue(),value);}
-    @Override public int size(){return entries.size();}
-    @Override public void clear(){entries.clear();}
-    @Override public Set<Map.Entry<Long,V>> entrySet(){return entries.entrySet();}
+    @Override public int size(){return entries==null?0:entries.size();}
+    @Override public void clear(){entries=null;}
+    @Override public Set<Map.Entry<Long,V>> entrySet(){return entries==null?Collections.emptySet():entries.entrySet();}
   }
 
   public static final class Built {

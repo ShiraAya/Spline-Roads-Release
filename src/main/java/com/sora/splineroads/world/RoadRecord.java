@@ -791,7 +791,7 @@ public record RoadRecord(
       new com.sora.splineroads.core.WeakIdentityCache<>(2048,750_000,m->m.samples().size());
   private static final com.sora.splineroads.core.WeakIdentityCache<RoadRecord,Mesh> SHAPED_MESHES =
       new com.sora.splineroads.core.WeakIdentityCache<>(2048,750_000,m->m.samples().size());
-  public static void clearMeshCaches(){RoadIndex.clearEditFootprints();com.sora.splineroads.core.RoadRaster.clearSavedRasters();com.sora.splineroads.core.RoadTunnelSpace.clearPreparedCache();RAW_MESHES.clear();SHAPED_MESHES.clear();TOLL_PLANS.clear();}
+  public static void clearMeshCaches(){JunctionCodec.clearSources();RoadIndex.clearEditFootprints();com.sora.splineroads.core.RoadRaster.clearSavedRasters();com.sora.splineroads.core.RoadTunnelSpace.clearPreparedCache();RAW_MESHES.clear();SHAPED_MESHES.clear();TOLL_PLANS.clear();}
   public static String meshCacheStats(){return "raw="+RAW_MESHES.stats()+", shaped="+SHAPED_MESHES.stats();}
   public boolean legacyRailway(){return railway()&&!settings.options().railbed().active();}
   public boolean railway(){return settings.style()==Style.RAILBED;}

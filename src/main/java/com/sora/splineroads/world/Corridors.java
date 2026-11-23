@@ -64,11 +64,11 @@ public final class Corridors {
             if(endpoint.node().equals(target)||ContinuousRoads.virtual(t,i,target))continue;
             if(data.index.atNode(from).stream().anyMatch(id->!replaced.contains(id)))SharedRoadEndpoints.validate(data,from,target);
             V pos=target.position();BlockPos to=BlockPos.containing(pos.x(),pos.y(),pos.z());chunks.node(to);
-            if(level.isOutsideBuildHeight(to)||!level.getWorldBorder().isWithinBounds(to))throw new IllegalArgumentException("调整后的端点超出世界高度或边界");
+            if(RoadBuildWorld.outside(level,to)||!RoadBuildWorld.border(level).isWithinBounds(to))throw new IllegalArgumentException("调整后的端点超出世界高度或边界");
             if(player!=null&&!level.mayInteract(player,to))throw new IllegalArgumentException("调整后的端点位于受保护区域");
-            var state=level.getBlockState(to);var entity=level.getBlockEntity(to);
+            var state=RoadBuildWorld.state(level,to);var entity=RoadBuildWorld.entity(level,to);
             boolean source=sources.contains(to)&&entity instanceof NodeEntity;
-            if(!source&&(entity!=null||state.getDestroySpeed(level,to)<0||RoadBlocks.isCollider(state)&&data.index.at(to.asLong()).stream().anyMatch(id->!replaced.contains(id))))
+            if(!source&&(entity!=null||state.getDestroySpeed(RoadBuildWorld.blocks(level),to)<0||RoadBlocks.isCollider(state)&&data.index.at(to.asLong()).stream().anyMatch(id->!replaced.contains(id))))
               throw new IllegalArgumentException("端点目标被占用："+to.toShortString()+"（"+net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(state.getBlock())+"）");
           }
           for(var leg:plan.legs())for(var old:data.index.roads.values())if(!replaced.contains(old.record.id())&&RoadIndex.overlapXZ(leg.mesh(),old.mesh,1))Interchanges.checkExternal(leg.mesh(),old.mesh);

@@ -253,7 +253,6 @@ public final class InterchangePlanner {
   private boolean raisedLayers;
   private final Map<Mesh,Map<Mesh,double[]>> mouthSides=new IdentityHashMap<>();
   private double cornerScale = 1;
-  private static final class CornerRadiusFailure extends IllegalArgumentException { CornerRadiusFailure(String message){super(message);} }
   private final java.util.function.UnaryOperator<V> conformance;
 
   private static final class Route {
@@ -361,8 +360,7 @@ public final class InterchangePlanner {
         ? new double[] {.40} : options.preset == Preset.CLOVERLEAF
         ? new double[] {.40, .52, .56, .60, .36, .32, .28, .24, .20, .16, .12, .64, .68, .72}
         : new double[] {.40, .36, .32, .28, .24, .20, .16, .52, .60};
-    double[] cornerScales=conformance!=null&&options.preset==Preset.STACK?new double[]{1,1.25,1.5,2,3,4,6,8}
-        :options.preset==Preset.TURBINE?new double[]{1,0}:new double[]{1};
+    double[] cornerScales=options.preset==Preset.TURBINE?new double[]{1,0}:new double[]{1};
     // Enabling upper flyovers expands the candidate set. Keep mixed under/over
     // crossings first, and use the elevated layering only when they do not fit.
     for(boolean raised:options.allowAbove?new boolean[]{false,true}:new boolean[]{false})
@@ -381,9 +379,6 @@ public final class InterchangePlanner {
             result.center, List.copyOf(Arrays.asList(nodes)));
       } catch (IllegalArgumentException error) {
         if (first == null) first = error;
-        // Direct-curve tension changes right turns only. Do not repeat an identical
-        // failing left turn nine times before trying a wider central bend.
-        if(error instanceof CornerRadiusFailure)break;
       }
     }
     throw first;
@@ -514,6 +509,7 @@ public final class InterchangePlanner {
                     || options.preset == Preset.TRUMPET && (options.trumpetStyle==TrumpetStyle.A?from==1:to==1));
         routes.add(route(from, to, right, leaf));
       }
+    if(options.preset==Preset.STACK)stackBranches();
     if(conformance!=null){
       // Fit elevations against the ACTUAL curved hosts and ramp lengths, not a deformed result
       // whose already-finalised vertical profile could become too steep or clip a road edge.
@@ -522,8 +518,11 @@ public final class InterchangePlanner {
       for(Route route:routes){RoadPlanningBudget.check();double radius=RoadRibbon.minRadius(horizontal(route));
         if(radius+.1<options.radius){
           String message=String.format(Locale.ROOT,"%s 实际转弯半径 %.1f 格，要求 %.1f 格",route.name,radius,options.radius);
-          if(options.preset==Preset.STACK&&route.priority==2)throw new CornerRadiusFailure(message);
           throw new IllegalArgumentException(message);}}
+    }
+    if(conformance==null&&options.preset==Preset.STACK)for(Route route:routes){
+      double radius=RoadRibbon.minRadius(horizontal(route));
+      if(radius+.1<options.radius)throw new IllegalArgumentException(String.format(Locale.ROOT,"%s 实际转弯半径 %.1f 格，要求 %.1f 格",route.name,radius,options.radius));
     }
     routes.sort(java.util.Comparator.comparing(r -> r.priority));
     // Keep a shared entrance/exit flat until neighboring branches have actually separated.
@@ -700,6 +699,35 @@ public final class InterchangePlanner {
   }
 
   private final Set<String> emittedPorts = new HashSet<>();
+
+  /** Four inner flyovers branch from and rejoin the outer ramps. The identical
+   * prefixes/tails are emitted once as common ramps, not extra mainline exits. */
+  private void stackBranches(){
+    for(Route left:routes)if(left.priority==2){
+      Route entry=routes.stream().filter(r->r.priority==0&&r.from==left.from).findFirst().orElseThrow();
+      Route exit=routes.stream().filter(r->r.priority==0&&r.to==left.to).findFirst().orElseThrow();
+      int first=stackStation(entry,.22),last=stackStation(exit,.78);
+      V a=entry.points.get(first),b=exit.points.get(last);
+      V diagonal=direction(ARMS[left.from].mul(-1).add(ARMS[left.to])).horizontalUnit();
+      V crossing=world(new V(0,0,0)).add(diagonal.left().mul(-traffic*(options.width()/2+1)));
+      double run=Math.min(a.sub(crossing).horizontalLength(),b.sub(crossing).horizontalLength())*.14;
+      var middle=curve(List.of(new Knot(a,routeTangent(entry,first)),
+          new Knot(crossing.sub(diagonal.mul(run)),diagonal),
+          new Knot(crossing.add(diagonal.mul(run)),diagonal),new Knot(b,routeTangent(exit,last))),directCurve);
+      var points=new ArrayList<>(entry.points.subList(0,first+1));
+      var widths=new ArrayList<>(entry.widths.subList(0,first+1));
+      for(int i=1;i<middle.size();i++){points.add(middle.get(i));widths.add(options.width());}
+      left.leadEnd=left.leadCut=first;left.tailStart=left.tailCut=points.size()-1;
+      points.addAll(exit.points.subList(last+1,exit.points.size()));widths.addAll(exit.widths.subList(last+1,exit.widths.size()));
+      if(points.size()>RoadLimits.MAX_SAMPLES)throw new IllegalArgumentException("堆栈匝道过长，请缩小范围");
+      left.points=points;left.widths=widths;entry.leadCut=first;exit.tailCut=last;
+    }
+  }
+  private static int stackStation(Route r,double fraction){
+    double length=0;for(int i=1;i<r.points.size();i++)length+=r.points.get(i).sub(r.points.get(i-1)).horizontalLength();
+    double d=0;for(int i=1;i<r.points.size();i++){d+=r.points.get(i).sub(r.points.get(i-1)).horizontalLength();if(d>=length*fraction)return i;}
+    throw new IllegalArgumentException("堆栈匝道分流位置无效");
+  }
 
   private void addWithSharedPorts(Route r, Mesh mesh) {
     boolean sharedStart =
@@ -1295,9 +1323,8 @@ public final class InterchangePlanner {
       // reject layouts that cut into a leaf; fitting enlarges the footprint when necessary.
       middle = curve(List.of(new Knot(aa, tangentA), new Knot(bb, tangentB)), directCurve);
     } else if (options.preset == Preset.STACK) {
-      // A stack flyover has one continuous turn. Returning to the unpeeled
-      // highway heading at intermediate knots introduced two reverse bends.
-      middle = curve(List.of(new Knot(aa, tangentA), new Knot(bb, tangentB)), directCurve);
+      // Replaced by stackBranches after all four outer ramp paths are available.
+      middle=List.of(aa,bb);
     } else if (options.preset == Preset.TURBINE || options.preset == Preset.Y) {
       double radius =
           Math.max(options.radius * 2, Math.max(main[0].width(), main[1].width()) * 2 + 18);

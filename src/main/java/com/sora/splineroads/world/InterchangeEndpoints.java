@@ -15,7 +15,7 @@ final class InterchangeEndpoints {
     BlockPos pos = BlockPos.of(points[i]);
     try (var chunks = RoadWorkChunks.open(level)) {
       chunks.node(pos);
-      if (level.getBlockEntity(pos) instanceof NodeEntity) {
+      if (RoadBuildWorld.entity(level,pos) instanceof NodeEntity) {
         var marker = RoadData.requireNode(level, pos, player);
         return new Endpoint(marker.constructionNode(), marker, marker.saveWithoutMetadata());
       }
@@ -29,10 +29,10 @@ final class InterchangeEndpoints {
         if (!player.mayBuild() || !level.mayInteract(player, pos))
           throw new IllegalArgumentException("此处没有建设权限");
       }
-      var state = level.getBlockState(pos);
+      var state = RoadBuildWorld.state(level,pos);
       boolean ownRoad = RoadBlocks.isCollider(state) && !data.index.at(pos.asLong()).isEmpty()
           && data.index.at(pos.asLong()).stream().allMatch(id -> saved.getUUID("Id").equals(data.index.roads.get(id).record.assembly()));
-      if (level.getBlockEntity(pos) != null || !(TunnelAir.isAirSpace(state) || state.is(SplineRoads.NODE.get()) || ownRoad))
+      if (RoadBuildWorld.entity(level,pos) != null || !(TunnelAir.isAirSpace(state) || state.is(SplineRoads.NODE.get()) || ownRoad))
         throw new IllegalArgumentException("立交端点 " + (char)('A' + i) + " 缺失，原位置被占用：" + pos.toShortString());
       Node node = RoadRecord.readNode(nodes.getCompound(i));
       var p = node.position();

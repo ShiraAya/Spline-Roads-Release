@@ -64,6 +64,8 @@ public final class RoadStructures {
 
     public Part {
       if(model==null||model.length()>128)throw new IllegalArgumentException("无效的设施模型");
+      // DataInputStream.readUTF creates a new empty String for each saved part.
+      if(model.isEmpty())model="";
       if(heights!=null)for(int i=0;i<4;i++)if(heights.get(i)>height+1e-7)throw new IllegalArgumentException("Corner height exceeds bounds");
       if (!RoadGeometry.finite(a.x(), a.y(), a.z(), b.x(), b.y(), b.z(), width, height)
           || width <= 0

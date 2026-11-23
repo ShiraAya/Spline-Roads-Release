@@ -333,6 +333,7 @@ public final class Interchanges {
 
   public static String build(ServerLevel level, ServerPlayer player, CompoundTag command) {
     try (var workChunks = RoadWorkChunks.open(level)) {
+      boolean authored=player!=null||RoadBuildJobs.worker();
       RoadData data = RoadData.get(level);
       long[] points = command.getLongArray("Points");
       UUID existing = command.hasUUID("Id") ? command.getUUID("Id") : null;
@@ -342,7 +343,7 @@ public final class Interchanges {
       clearRemovedDesign(t);
       if(ParallelSpui.present(t)){
         ParallelSpui.capture(data,t,player);
-        if(player!=null&&read(t.getCompound("Options")).adjustEndpoints()){
+        if(authored&&read(t.getCompound("Options")).adjustEndpoints()){
           var fitted=new ListTag();ParallelSpui.plan(t).anchors().forEach(node->fitted.add(RoadRecord.writeNode(node)));
           if(!command.getList("SourceNodes",Tag.TAG_COMPOUND).equals(t.getList("Nodes",Tag.TAG_COMPOUND))
               ||!command.getList("FittedNodes",Tag.TAG_COMPOUND).equals(fitted))
@@ -358,15 +359,15 @@ public final class Interchanges {
         if (command.contains(key)) t.put(key, command.getCompound(key).copy());
       validateMainStyles(t);
       if(t.contains("Corridor"))HostAxes.normalizeCorridor(t);
-      if(player!=null&&command.contains("SourceAxesHash")&&command.getInt("SourceAxesHash")!=HostAxes.signature(t))throw new IllegalArgumentException("主路曲线已改变，请重新打开生成器查看预览");
+      if(authored&&command.contains("SourceAxesHash")&&command.getInt("SourceAxesHash")!=HostAxes.signature(t))throw new IllegalArgumentException("主路曲线已改变，请重新打开生成器查看预览");
       var plan = t.contains("Corridor")?Corridors.resolve(level,player,t):
-          player!=null&&ConfirmedInterchangeFit.eligible(t)&&read(t.getCompound("Options")).adjustEndpoints()
+          authored&&ConfirmedInterchangeFit.eligible(t)&&read(t.getCompound("Options")).adjustEndpoints()
               ?confirmedPlan(t,command):plan(t);
       UUID group = t.hasUUID("Id") ? t.getUUID("Id") : UUID.randomUUID(),
           owner =
               t.hasUUID("Owner")
                   ? t.getUUID("Owner")
-                  : player == null ? new UUID(0, 0) : player.getUUID();
+                  : RoadBuildWorld.owner(player);
       Set<UUID> removed = new HashSet<>();
       var retainedConnector=InterchangeConnectors.preserve(data,t,plan);
       if (!t.hasUUID("Id"))
@@ -406,7 +407,7 @@ public final class Interchanges {
       ListTag proposedNodes = new ListTag();
       plan.anchors().forEach(node -> proposedNodes.add(RoadRecord.writeNode(node)));
       boolean adjust = read(t.getCompound("Options")).adjustEndpoints();
-      if (player != null
+      if (authored
           && adjust
           && (!command
                   .getList("SourceNodes", Tag.TAG_COMPOUND)
@@ -515,7 +516,7 @@ public final class Interchanges {
       Set<BlockPos> preserved = new HashSet<>();
       for (long point : points) preserved.add(BlockPos.of(point));
       for (long point : t.getLongArray("PreservedNodes"))
-        if (level.getBlockEntity(BlockPos.of(point)) instanceof NodeEntity)
+        if (RoadBuildWorld.entity(level,BlockPos.of(point)) instanceof NodeEntity)
           preserved.add(BlockPos.of(point));
       for (UUID oldId : removed) {
         var old = data.index.roads.get(oldId);
@@ -526,7 +527,7 @@ public final class Interchanges {
         }
         if (old != null)
           for (var p : List.of(old.record.a(), old.record.b()))
-            if (level.getBlockEntity(p) instanceof NodeEntity) preserved.add(p);
+            if (RoadBuildWorld.entity(level,p) instanceof NodeEntity) preserved.add(p);
       }
       if(t.contains("Corridor")||!ContinuousRoads.sources(t).isEmpty()){
         // Generated frontage and continuous-range endpoints are owned by this saved combination.
@@ -535,13 +536,13 @@ public final class Interchanges {
         for(BlockPos old:new ArrayList<>(preserved)){
           if(records.stream().anyMatch(r->r.record.a().equals(old)||r.record.b().equals(old)))continue;
           if(data.index.atNode(old).stream().anyMatch(id->!removed.contains(id)))continue;
-          if(level.getBlockEntity(old) instanceof NodeEntity&&moves.stream().noneMatch(m->old.equals(m.from())))moves.add(RoadData.NodeMove.retire(old));
+          if(RoadBuildWorld.entity(level,old) instanceof NodeEntity&&moves.stream().noneMatch(m->old.equals(m.from())))moves.add(RoadData.NodeMove.retire(old));
           preserved.remove(old);
         }
       }
       Set<BlockPos> destinations = new HashSet<>();
       for(var pos:InterchangeConnectors.obsoleteNodes(data,t,records,removed)){
-        if(level.getBlockEntity(pos) instanceof NodeEntity){RoadData.requireNode(level,pos,player);moves.add(RoadData.NodeMove.retire(pos));}
+        if(RoadBuildWorld.entity(level,pos) instanceof NodeEntity){RoadData.requireNode(level,pos,player);moves.add(RoadData.NodeMove.retire(pos));}
         preserved.remove(pos);
       }
       moves.forEach(move -> {if(move.to()!=null)destinations.add(move.to());});
@@ -552,7 +553,7 @@ public final class Interchanges {
         for(var record:records)if(!record.mesh.settings().style().ramp())for(boolean first:new boolean[]{true,false}){
           BlockPos pos=first?record.record.a():record.record.b();
           if(destinations.contains(pos)){preserved.add(pos);continue;}
-          if(level.getBlockEntity(pos) instanceof NodeEntity){RoadData.requireNode(level,pos,player);preserved.add(pos);continue;}
+          if(RoadBuildWorld.entity(level,pos) instanceof NodeEntity){RoadData.requireNode(level,pos,player);preserved.add(pos);continue;}
           if(!added.add(pos))continue;
           Node node=InterchangeEndpoints.generated(points,plan.anchors(),pos,first?record.record.start():record.record.end());
           CompoundTag snapshot=new CompoundTag();snapshot.putUUID("Owner",record.record.owner());
@@ -689,7 +690,7 @@ public final class Interchanges {
           BlockPos pos = first ? r.a() : r.b();
           selected.add(pos);
           chunks.node(pos);
-          if (level.getBlockEntity(pos) instanceof NodeEntity) {
+          if (RoadBuildWorld.entity(level,pos) instanceof NodeEntity) {
             RoadData.requireNode(level, pos, player);
           } else if (added.add(pos)) {
             // Three-way mainline stubs have an internal endpoint without a physical marker.
@@ -726,7 +727,7 @@ public final class Interchanges {
         ids,
         Arrays.stream(saved.getLongArray("Points"))
             .mapToObj(BlockPos::of)
-            .collect(java.util.stream.Collectors.toSet()),InterchangeConnectors.obsoleteNodes(data,saved.copy(),List.of(),ids).stream().filter(p->level.getBlockEntity(p) instanceof NodeEntity).map(RoadData.NodeMove::retire).toList(),editLimit(saved));
+            .collect(java.util.stream.Collectors.toSet()),InterchangeConnectors.obsoleteNodes(data,saved.copy(),List.of(),ids).stream().filter(p->RoadBuildWorld.entity(level,p) instanceof NodeEntity).map(RoadData.NodeMove::retire).toList(),editLimit(saved));
     InterchangeJunctions.forget(data,id);
     data.interchanges.remove(id);
     data.setDirty();
