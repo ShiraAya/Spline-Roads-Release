@@ -1440,7 +1440,7 @@ public final class RoadRenderer {
 
   static String uploadMetrics(){var p=pendingUpload;long lightBytes=0;for(var map:List.of(regions,dormant))for(var section:map.values())lightBytes+=section.lightReads.bytes()+section.surfaceReads.bytes()+section.detailReads.bytes();return "upload frames="+uploadFrames+" zero="+uploadZeroFrames+" cancel="+uploadCancels+" packed="+packedFaces+" pavementReuse="+pavementReuse+" detailReuse="+detailReuse+" lightChecks="+lightReadChecks+" lightPositions="+lightReadPositions+" lightUnchanged="+lightReadUnchanged+" lightHashes="+lightHashes+" lightBytes="+lightBytes+" candidateChecks="+buildCandidateChecks+" "+RoadUploadBudget.metrics()+(p==null?" idle":" pendingMs="+((System.nanoTime()-p.started)/1000000)+" batch="+p.batchIndex+" face="+p.faceIndex);}
   private static Mesh furniturePreview;
-  private record FurnitureResult(List<RoadSurface.Face> faces,RoadPreviewGround.Sources ground,String failure){}
+  private record FurnitureResult(List<RoadSurface.Face> faces,RoadPreviewGround.Sources ground,String failure,boolean blocking){}
   private static final LatestPlanningTask<FurnitureResult> furnitureTask=new LatestPlanningTask<>("SR-furniture-preview");
   private static RoadPreviewSnapshot furnitureSnapshot;
   private static boolean furnitureRunning;
@@ -1466,28 +1466,33 @@ public final class RoadRenderer {
   private static long furnitureRevision = Long.MIN_VALUE;
   private static List<RoadSurface.Face> furnitureFaces = List.of();
   private static String furnitureFailure="";
+  private static boolean furnitureBlocking;
 
   static void previewFurnitureStatus(Mesh mesh){
     if(mesh!=furniturePreview||furnitureRevision!=ClientRoads.INDEX.revision()
         ||furnitureContextRevision!=previewContextRevision)return;
-    if(Minecraft.getInstance().screen instanceof RoadScreen screen)screen.furnitureStatus(furnitureFailure);
+    if(Minecraft.getInstance().screen instanceof RoadScreen screen)screen.furnitureStatus(furnitureFailure,furnitureBlocking);
   }
 
   private static void clearPreviewFurniture(){
     furnitureTask.cancel();furnitureGeneration++;furnitureSnapshot=null;furnitureRunning=false;
-    furniturePreview=null;furnitureGround=null;furnitureRevision=furnitureContextRevision=Long.MIN_VALUE;furnitureFaces=List.of();furnitureFailure="";
+    furniturePreview=null;furnitureGround=null;furnitureRevision=furnitureContextRevision=Long.MIN_VALUE;furnitureFaces=List.of();furnitureFailure="";furnitureBlocking=false;
   }
   private static List<RoadSurface.Face> previewFurniture(Mesh mesh) {
     var level = Minecraft.getInstance().level;
     long revision = ClientRoads.INDEX.revision();
     if(level==null)return List.of();
+    if(!com.sora.splineroads.core.RoadProfile.modern(mesh.settings().style())){
+      clearPreviewFurniture();furniturePreview=mesh;furnitureRevision=revision;furnitureContextRevision=previewContextRevision;
+      previewFurnitureStatus(mesh);return List.of();
+    }
     boolean same=furniturePreview==mesh&&furnitureRevision==revision&&furnitureContextRevision==previewContextRevision;
     if(same&&furnitureRunning){previewFurnitureStatus(mesh);return furnitureFaces;}
     if(same&&furnitureGround==null&&furnitureSnapshot==null&&!furnitureFailure.isEmpty()){previewFurnitureStatus(mesh);return furnitureFaces;}
     if(same&&furnitureGround!=null&&furnitureGround.current(level)){previewFurnitureStatus(mesh);return furnitureFaces;}
     if(!same||furnitureSnapshot==null){
       clearPreviewFurniture();furniturePreview=mesh;furnitureRevision=revision;furnitureContextRevision=previewContextRevision;
-      furnitureSnapshot=new RoadPreviewSnapshot(level,mesh);furnitureFailure="正在读取设施预览地形…";
+      furnitureSnapshot=new RoadPreviewSnapshot(level,mesh);furnitureFailure="设施预览读取地形中，当前道路可建造…";
     }
     if(!furnitureSnapshot.step(level)){previewFurnitureStatus(mesh);return furnitureFaces;}
     var snapshot=furnitureSnapshot;furnitureSnapshot=null;furnitureRunning=true;
@@ -1497,8 +1502,6 @@ public final class RoadRenderer {
     furnitureContextRevision=previewContextRevision;
     furnitureGround = null;
     furnitureFailure="";
-    if (!com.sora.splineroads.core.RoadProfile.modern(mesh.settings().style()))
-      return furnitureFaces = List.of();
     UUID edited=ClientRoads.draft!=null&&ClientRoads.draft.hasUUID("Id")?ClientRoads.draft.getUUID("Id"):null;
     if(edited==null&&ClientRoads.draft!=null&&ClientRoads.draft.getString("Kind").equals("node")){
       var attached=ClientRoads.draft.getList("Attached",net.minecraft.nbt.Tag.TAG_COMPOUND);
@@ -1519,7 +1522,7 @@ public final class RoadRenderer {
     UUID selected=edited;
     var records=ClientRoads.INDEX.roads.values().stream().map(r->r.record).toList();
     var draft=ClientRoads.draft==null?null:ClientRoads.draft.copy();
-    furnitureFailure="正在后台计算设施预览…";
+    furnitureFailure="设施预览后台计算中，当前道路可建造…";
     furnitureTask.submit(()->{
     var roads=records.stream().map(com.sora.splineroads.world.RoadIndex.Built::loading).toList();
     var ground = RoadPreviewGround.create(level,mesh,selected,roads,null,fixed,reference,candidate).snapshot(snapshot);
@@ -1549,15 +1552,15 @@ public final class RoadRenderer {
       parts=TactileSurface.outsideWalls(parts,walls);
       List<RoadSurface.Face> faces = new ArrayList<>();
       for (var part : RoadSignVisibility.parts(resolved,parts)){RoadPlanningBudget.check();if(snapshot.visible(part))faces.addAll(part.faces());}
-      return new FurnitureResult(List.copyOf(faces),ground.sources(),"");
+      return new FurnitureResult(List.copyOf(faces),ground.sources(),"",false);
     } catch (IllegalArgumentException e) {
-      return new FurnitureResult(List.of(),ground.sources(),ground.incomplete()?"正在等待桥墩基础附近地形加载…":"设施预览无效："+e.getMessage());
+      return new FurnitureResult(List.of(),ground.sources(),ground.incomplete()?"附近地形尚未加载，设施将在建造时完整校验":"设施预览无效："+e.getMessage(),!ground.incomplete());
     }
     },(result,failure)->Minecraft.getInstance().execute(()->{
       if(generation!=furnitureGeneration||Minecraft.getInstance().level!=level)return;
       furnitureRunning=false;
-      if(failure==null){furnitureFaces=result.faces();furnitureGround=result.ground();furnitureFailure=result.failure();}
-      else {furnitureFaces=List.of();furnitureFailure="设施预览失败："+failure.getMessage();}
+      if(failure==null){furnitureFaces=result.faces();furnitureGround=result.ground();furnitureFailure=result.failure();furnitureBlocking=result.blocking();}
+      else {furnitureFaces=List.of();furnitureFailure="设施预览失败："+failure.getMessage();furnitureBlocking=true;}
       previewFurnitureStatus(mesh);
     }));
     previewFurnitureStatus(mesh);return furnitureFaces;

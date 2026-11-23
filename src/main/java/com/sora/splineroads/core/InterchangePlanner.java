@@ -250,6 +250,7 @@ public final class InterchangePlanner {
   private final List<Route> routes = new ArrayList<>();
   private final List<Double> serviceCenters = new ArrayList<>();
   private double directCurve = .40;
+  private boolean raisedLayers;
   private final Map<Mesh,Map<Mesh,double[]>> mouthSides=new IdentityHashMap<>();
   private double cornerScale = 1;
   private static final class CornerRadiusFailure extends IllegalArgumentException { CornerRadiusFailure(String message){super(message);} }
@@ -360,12 +361,17 @@ public final class InterchangePlanner {
         ? new double[] {.40} : options.preset == Preset.CLOVERLEAF
         ? new double[] {.40, .52, .56, .60, .36, .32, .28, .24, .20, .16, .12, .64, .68, .72}
         : new double[] {.40, .36, .32, .28, .24, .20, .16, .52, .60};
-    double[] cornerScales=conformance!=null&&options.preset==Preset.STACK?new double[]{1,1.25,1.5,2,3,4,6,8}:new double[]{1};
+    double[] cornerScales=conformance!=null&&options.preset==Preset.STACK?new double[]{1,1.25,1.5,2,3,4,6,8}
+        :options.preset==Preset.TURBINE?new double[]{1,0}:new double[]{1};
+    // Enabling upper flyovers expands the candidate set. Keep mixed under/over
+    // crossings first, and use the elevated layering only when they do not fit.
+    for(boolean raised:options.allowAbove?new boolean[]{false,true}:new boolean[]{false})
     for(double corner:cornerScales)for (double curve : curves) {
       RoadPlanningBudget.check();
       var planner = new InterchangePlanner(expand(nodes, options), a, b, options,conformance);
       planner.directCurve = curve;
       planner.cornerScale = corner;
+      planner.raisedLayers = raised;
       try {
         var result = planner.build();
         // A fitted candidate is successful only after checking its mapped, physical geometry.
@@ -553,7 +559,7 @@ public final class InterchangePlanner {
                   + Math.abs(heights[0] - heights[1])
                       * (heights[r.from % 2] < heights[r.to % 2] ? 1 : 2)
                       / 3
-              : options.allowAbove || options.preset.three && Math.abs(heights[0]-heights[1])+1e-6 < layeredDifference(main[0],main[1],options)
+              : raisedLayers || options.preset.three && Math.abs(heights[0]-heights[1])+1e-6 < layeredDifference(main[0],main[1],options)
                   ? Math.max(heights[0],heights[1]) + slot * step
                   : base + slot * step;
       List<Mesh> others = new ArrayList<>(mains);
@@ -1295,6 +1301,10 @@ public final class InterchangePlanner {
     } else if (options.preset == Preset.TURBINE || options.preset == Preset.Y) {
       double radius =
           Math.max(options.radius * 2, Math.max(main[0].width(), main[1].width()) * 2 + 18);
+      // A turbine's four left turns sweep around the central crossing. Use the
+      // available run for this broad arc instead of squeezing every interchange
+      // into the same tiny central circle with long nearly straight approaches.
+      if(options.preset==Preset.TURBINE)radius=Math.max(radius,(Math.min(sa,sb)-lead)*.35*cornerScale);
       V enter = world(dj.mul(-radius)), leave = world(di.mul(radius));
       middle = new ArrayList<>(curve(List.of(new Knot(aa, tangentA), new Knot(enter, fwa))));
       int n = (int) Math.ceil(Math.PI * radius / .8);
@@ -1684,6 +1694,7 @@ public final class InterchangePlanner {
       double h0=hostHeight(r.from,r.points.get(r.leadEnd)),h1=hostHeight(r.to,r.points.get(r.tailStart));
       for(int i=0;i<n;i++){
         preferred[start+i]=h0+(h1-h0)*grade((d[i]-d[r.leadEnd])/(d[r.tailStart]-d[r.leadEnd]));
+        if(!options.allowAbove&&!options.preset.three)upper[start+i]=Math.max(heights[0],heights[1]);
         if(i<=r.leadEnd)lower[start+i]=upper[start+i]=h0;
         if(i>=r.tailStart)lower[start+i]=upper[start+i]=h1;
         if(i>0){double reach=(RoadGrades.MAX_RAMP_GRADE-1e-6)*(d[i]-d[i-1]);
@@ -1732,7 +1743,7 @@ public final class InterchangePlanner {
         }
       }
     }
-    double[] y=InterchangeGradeProfile.solve(preferred,lower,upper,edges,offset,distance);var result=new ArrayList<Mesh>();
+    double[] y=InterchangeGradeProfile.smooth(preferred,lower,upper,edges,offset,distance);var result=new ArrayList<Mesh>();
     for(int ri=0;ri<count;ri++){
       var r=routes.get(ri);var samples=new ArrayList<Sample>();
       for(int i=0;i<r.points.size();i++){V p=r.points.get(i);samples.add(new Sample(new V(p.x(),y[offset[ri]+i],p.z()),routeTangent(r,i).left(),0,r.widths.get(i)/2));}

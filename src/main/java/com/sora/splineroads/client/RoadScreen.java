@@ -673,12 +673,15 @@ public final class RoadScreen extends Screen {
   }
 
   private String furnitureFailure="",beforeFurnitureFailure="";
-  void furnitureStatus(String reason){
+  void furnitureStatus(String reason){furnitureStatus(reason,false);}
+  void furnitureStatus(String reason,boolean blocking){
     if(pending||!serverFailure.isEmpty()||ClientRoads.conflictPreview)return;
     if(!reason.isEmpty()){
       if(furnitureFailure.isEmpty()||!status.equals(furnitureFailure))beforeFurnitureFailure=status;
-      furnitureFailure=reason;status=reason;ClientRoads.error=reason;
-      if(save!=null)save.active=false;
+      furnitureFailure=reason;status=reason;ClientRoads.error=blocking?reason:"";
+      // Background decoration does not invalidate a resolved road. Construction
+      // still performs the full authoritative terrain and structure checks.
+      if(save!=null)save.active=!blocking&&ClientRoads.preview!=null;
     }else if(!furnitureFailure.isEmpty()){
       if(status.equals(furnitureFailure))status=beforeFurnitureFailure;
       if(ClientRoads.error.equals(furnitureFailure))ClientRoads.error="";

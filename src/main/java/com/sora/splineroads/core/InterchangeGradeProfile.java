@@ -5,6 +5,51 @@ import java.util.*;
 /** Local crossing bounds on a continuous ramp. Unoccupied bends have no deck-height target. */
 final class InterchangeGradeProfile {
   record Edge(int from,int to,double rise) {}
+  /** Reserve the complete vertical-curve support BEFORE solving clearances.
+   * A box integral of a continuous linear profile is C1, preserves its grade
+   * limit, and stays inside these expanded envelopes. This is not a visual
+   * smoothing pass over already certified crossing heights. */
+  static double[] smooth(double[] preferred,double[] lower,double[] upper,List<Edge> edges,int[] offsets,double[][] distance){
+    IllegalArgumentException first=null;
+    for(double radius:new double[]{32,24,16,12,8})try{
+      int n=preferred.length;int[] from=new int[n],to=new int[n];
+      double[] lo=lower.clone(),hi=upper.clone();
+      for(int r=0;r<offsets.length;r++){
+        int start=offsets[r];double[] d=distance[r];
+        for(int i=0;i<d.length;i++){
+          if((i&255)==0)RoadPlanningBudget.check();
+          // Include both interpolation endpoints at each support boundary.
+          int a=floor(d,d[i]-radius),b=ceil(d,d[i]+radius);from[start+i]=start+a;to[start+i]=start+b;
+          for(int j=a;j<=b;j++){lo[start+j]=Math.max(lo[start+j],lower[start+i]);hi[start+j]=Math.min(hi[start+j],upper[start+i]);}
+        }
+      }
+      var graph=new ArrayList<Edge>();var maxima=new LinkedHashMap<Integer,Integer>();var minima=new LinkedHashMap<Integer,Integer>();int next=n;
+      for(var e:edges)if(e.rise()>0){
+        Integer a=maxima.get(e.from());if(a==null){a=next++;maxima.put(e.from(),a);}
+        Integer b=minima.get(e.to());if(b==null){b=next++;minima.put(e.to(),b);}
+        graph.add(new Edge(a,b,e.rise()));
+      }else graph.add(e);
+      double[] target=Arrays.copyOf(preferred,next);lo=Arrays.copyOf(lo,next);hi=Arrays.copyOf(hi,next);
+      Arrays.fill(lo,n,next,Double.NEGATIVE_INFINITY);Arrays.fill(hi,n,next,Double.POSITIVE_INFINITY);
+      for(var entry:maxima.entrySet()){int i=entry.getKey(),aux=entry.getValue();target[aux]=preferred[i];for(int j=from[i];j<=to[i];j++)graph.add(new Edge(j,aux,0));}
+      for(var entry:minima.entrySet()){int i=entry.getKey(),aux=entry.getValue();target[aux]=preferred[i];for(int j=from[i];j<=to[i];j++)graph.add(new Edge(aux,j,0));}
+      var feasible=solve(target,lo,hi,graph,offsets,distance);double[] result=new double[n];
+      for(int r=0;r<offsets.length;r++){
+        int start=offsets[r];double[] d=distance[r],y=Arrays.copyOfRange(feasible,start,start+d.length),area=new double[d.length];
+        for(int i=1;i<d.length;i++)area[i]=area[i-1]+(y[i-1]+y[i])*.5*(d[i]-d[i-1]);
+        for(int i=0;i<d.length;i++)result[start+i]=(integral(d,y,area,d[i]+radius)-integral(d,y,area,d[i]-radius))/(2*radius);
+      }
+      for(int i=0;i<n;i++)if(result[i]<lower[i]-1e-6||result[i]>upper[i]+1e-6)throw new IllegalArgumentException("竖曲线超出交叉高程约束");
+      for(var e:edges)if(result[e.to()]<result[e.from()]+e.rise()-1e-6)throw new IllegalArgumentException("竖曲线未满足交叉净高或纵坡");
+      return result;
+    }catch(IllegalArgumentException rejected){if(first==null)first=rejected;RoadPlanningBudget.check();}
+    throw new IllegalArgumentException("没有足够长度设置平滑竖曲线，请扩大立交范围："+first.getMessage(),first);
+  }
+  private static double integral(double[] d,double[] y,double[] area,double at){
+    if(at<=d[0])return (at-d[0])*y[0];int end=d.length-1;
+    if(at>=d[end])return area[end]+(at-d[end])*y[end];
+    int i=floor(d,at);double dx=at-d[i];return area[i]+y[i]*dx+.5*(y[i+1]-y[i])*dx*dx/(d[i+1]-d[i]);
+  }
   /** Every route is monotone when possible, otherwise has one crest or valley.
    * Direction constraints are solved with the crossing graph, never applied as
    * a cosmetic pass that could put a smoothed road back through another deck. */
