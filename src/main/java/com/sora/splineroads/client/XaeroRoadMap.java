@@ -1,6 +1,5 @@
 package com.sora.splineroads.client;
 
-import com.sora.splineroads.SplineRoads;
 import com.sora.splineroads.core.RoadMapTile;
 import com.sora.splineroads.world.*;
 import java.util.*;
@@ -34,7 +33,7 @@ public final class XaeroRoadMap {
     if((local.getX()&15)==0&&(local.getZ()&15)==0&&chunk.getLevel()==publishedLevel){var sources=chunks.get(chunk.getPos().toLong());synchronized(miniSeen){
       if(sources==null)miniSeen.remove(chunk);else{var previous=miniSeen.get(chunk);if(previous==null||previous.get()!=sources)miniSeen.put(chunk,new java.lang.ref.WeakReference<>(sources));}
     }}
-    var value=read(chunk,local);if(METRICS){miniReads.increment();if(value!=chunk.getBlockState(local)&&!value.isAir())miniProjected.increment();if(value.is(SplineRoads.ROAD_BLOCK.get()))miniAsphalt.increment();if(value.is(Blocks.OAK_LEAVES))miniGreen.increment();}return value;
+    var value=read(chunk,local);if(METRICS){miniReads.increment();if(value!=chunk.getBlockState(local)&&!value.isAir())miniProjected.increment();if(value.is(Blocks.GRAY_CONCRETE))miniAsphalt.increment();if(value.is(Blocks.OAK_LEAVES))miniGreen.increment();}return value;
   }
   /** SR geometry arrives separately from vanilla blocks. Xaero's clean-chunk
    * flag alone would permanently reuse the terrain sampled before that packet.
@@ -88,7 +87,9 @@ public final class XaeroRoadMap {
     return original.hasProperty(RoadBlocks.Road.FILL)?original.getValue(RoadBlocks.Road.FILL).state():Blocks.AIR.defaultBlockState();
   }
   private static BlockState state(RoadMapTile.Material m){return switch(m){
-    case ASPHALT -> SplineRoads.ROAD_BLOCK.get().defaultBlockState();case GREEN,OAK -> Blocks.OAK_LEAVES.defaultBlockState();
+    // Cartographic asphalt uses a darker neutral swatch so stone pavements remain
+    // distinguishable at map resolution. This proxy never changes world blocks.
+    case ASPHALT -> Blocks.GRAY_CONCRETE.defaultBlockState();case GREEN,OAK -> Blocks.OAK_LEAVES.defaultBlockState();
     case BIRCH -> Blocks.BIRCH_LEAVES.defaultBlockState();case SPRUCE -> Blocks.SPRUCE_LEAVES.defaultBlockState();case CHERRY -> Blocks.CHERRY_LEAVES.defaultBlockState();
     case STONE_BRICKS -> Blocks.STONE_BRICKS.defaultBlockState();case BRICKS -> Blocks.BRICKS.defaultBlockState();case ANDESITE -> Blocks.ANDESITE.defaultBlockState();
     case DIORITE -> Blocks.DIORITE.defaultBlockState();case GRANITE -> Blocks.GRANITE.defaultBlockState();case SMOOTH_STONE -> Blocks.SMOOTH_STONE.defaultBlockState();

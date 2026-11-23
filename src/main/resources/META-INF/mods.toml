@@ -3,7 +3,7 @@ loaderVersion="[47,)"
 license="Spline Roads Non-Commercial License (META-INF/LICENSE.txt); third-party notices in META-INF/licenses"
 [[mods]]
 modId="splineroads"
-version="2.1.2-fix9"
+version="2.1.2-fix10"
 displayName="Spline Roads"
 authors="Sora, with AI-assisted implementation"
 description='''Independent endpoint-based solid spline roads. Generated with AI assistance.'''
