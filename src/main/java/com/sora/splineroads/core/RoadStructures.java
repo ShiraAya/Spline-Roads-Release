@@ -349,7 +349,9 @@ public final class RoadStructures {
         double insetA=RoadRailJoin.inset(mesh,a,side),insetB=RoadRailJoin.inset(mesh,b,side);
         V aa=a.at(side*(a.halfWidth()-insetA),0),bb=b.at(side*(b.halfWidth()-insetB),0),mid=aa.add(bb).mul(.5);
         boolean raised=RoadStreetscape.raised(mesh,sample(mesh,(a.distance()+b.distance())/2),side);
-        if(!raised&&mesh.settings().structure()==Structure.AUTO)for(V point:List.of(aa,mid,bb))if(elevated(mesh,point,ground)){
+        // Ground-mode construction can still leave an exposed elevated deck.
+        // Classify its safety barrier here without enabling bridge piers or changing grading.
+        if(!raised&&(mesh.settings().structure()==Structure.AUTO||mesh.settings().structure()==Structure.GROUND))for(V point:List.of(aa,mid,bb))if(elevated(mesh,point,ground)){
           raised=true;break;
         }
         V sum=a.left().add(b.left());V normal=sum.horizontalLength()<1e-7?a.left():sum.horizontalUnit();
@@ -359,7 +361,7 @@ public final class RoadStructures {
             && mesh.settings().options().outerRail()!=RoadProfile.OuterRail.OFF
             && (mesh.settings().style()==Style.RAILBED || mesh.settings().options().outerRail()==RoadProfile.OuterRail.ON || highway
                 ||modern&&mesh.settings().style().ramp() ||mesh.settings().structure()==Structure.BRIDGE
-                ||mesh.settings().structure()!=Structure.GROUND&&raised);
+                ||raised);
         boolean transverse=b.distance()-a.distance()<3e-5&&bb.sub(aa).horizontalLength()>.01;
         if(visible&&transverse){
           emitOuterRailRun(out,run,mesh,ground,modern,highway,side);run.clear();

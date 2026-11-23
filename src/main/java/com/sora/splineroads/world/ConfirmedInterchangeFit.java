@@ -11,7 +11,7 @@ import net.minecraft.nbt.*;
 final class ConfirmedInterchangeFit {
   static boolean eligible(CompoundTag source){
     int n=source.getList("Nodes",Tag.TAG_COMPOUND).size();
-    return n>=3&&n<=4&&!source.contains("Corridor")&&!ParallelSpui.present(source)
+    return n>=3&&n<=6&&!source.contains("Corridor")&&!ParallelSpui.present(source)
         &&HostAxes.read(source).stream().allMatch(axis->axis.flat()&&!axis.curved());
   }
   static CompoundTag candidate(CompoundTag source,CompoundTag command){
@@ -46,12 +46,24 @@ final class ConfirmedInterchangeFit {
     var a=RoadRecord.readSettings(source.getCompound("Main1"));var b=RoadRecord.readSettings(source.getCompound("Main2"));
     // These are exactly the vertical alternatives used by InterchangeFit and
     // ContinuousFit: authored heights, leveled originals, or leveled usable ends.
+    boolean fittedHeights;
+    if(n>=5){
+      Settings[] mains={a,b,RoadRecord.readSettings(source.getCompound("Main3"))};
+      fittedHeights=multiHeights(target,original,mains,options)||multiHeights(target,available,mains,options.shrink(false));
+    }else fittedHeights=sameHeights(target,leveled(original,a,b,options))
+        ||sameHeights(target,leveled(available,a,b,options.shrink(false)));
     if(!sameHeights(target,original)&&!sameHeights(target,available)
-        &&!sameHeights(target,leveled(original,a,b,options))
-        &&!sameHeights(target,leveled(available,a,b,options.shrink(false))))
+        &&!fittedHeights)
       throw new IllegalArgumentException("预览端点高程超出允许的主路调整");
     var fixed=source.copy();fixed.put("Nodes",tags.copy());fixed.put("Options",Interchanges.write(options.adjust(false)));
     fixed.remove("HostAxes");fixed.remove("ResolvedFit");return fixed;
+  }
+  private static boolean multiHeights(Node[] target,Node[] reference,Settings[] mains,Options options){
+    double[] levels=MultiInterchange.fittedLevels(reference,mains,options);
+    for(int i=0;i<target.length;i++){
+      double y=reference[i].position().y()+levels[i/2]-reference[(i/2)*2].position().y();
+      if(Math.abs(target[i].position().y()-y)>1e-7)return false;
+    }return true;
   }
   private static boolean orientation(Node reference,Node target){
     return Math.abs(target.yaw()-reference.yaw())<=1e-7

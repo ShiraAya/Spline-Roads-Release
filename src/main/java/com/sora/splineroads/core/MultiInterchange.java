@@ -65,17 +65,9 @@ public final class MultiInterchange {
     double drop=options.adjustEndpoints()&&options.allowShrink()?options.maxLowering():0;
     double base=Math.max(Math.min(baseHeight,bottom),bottom-drop);
     center=new V(hit.x(),base,hit.z());
-    levels=new double[3];
-    for(int axis=0;axis<3;axis++)levels[axis]=nodes[axis*2].position().y();
-    // Preserve the user's vertical ordering, while retaining automatic clearance
-    // fitting. Earlier axes win the lift tie: AB above CD above EF.
-    double[] original=levels.clone();Integer[] order={0,1,2};
-    Arrays.sort(order,Comparator.<Integer>comparingDouble(i->original[i]).thenComparing(Comparator.reverseOrder()));
-    levels[order[0]]=original[order[0]];
-    for(int i=1;i<3;i++)levels[order[i]]=Math.max(original[order[i]]-drop,levels[order[i-1]]+gap);
+    levels=fittedLevels(nodes,main,options);
     if(options.adjustEndpoints())for(int i=0;i<n;i++) {
-      if(i/2==order[0]){anchors[i]=nodes[i];continue;}
-      double rise=levels[i/2]-original[i/2];V p=nodes[i].position();
+      double rise=levels[i/2]-nodes[(i/2)*2].position().y();V p=nodes[i].position();
       anchors[i]=new Node(new V(p.x(),p.y()+rise,p.z()),nodes[i].yaw(),nodes[i].grade());
     }
     radial=new V[n];lengths=new double[n];
@@ -86,6 +78,16 @@ public final class MultiInterchange {
       if(i%2==1&&radial[i].dot(radial[i-1])>-.9999)throw new IllegalArgumentException("AB、CD、EF 各自需穿过同一个中心且方向相反");
     }
     for(int i=0;i<n;i++)for(int j=i+1;j<n;j++)if(radial[i].dot(radial[j])>Math.cos(Math.toRadians(25)))throw new IllegalArgumentException("相邻方向夹角至少 25°");
+  }
+  /** Shared with submission validation; the lowest authored axis remains pinned. */
+  public static double[] fittedLevels(Node[] nodes,Settings[] main,Options options){
+    double gap=Math.ceil((options.clearance()+Arrays.stream(main).mapToDouble(Settings::thickness).max().orElse(1)+.5)*2)/2;
+    double drop=options.adjustEndpoints()&&options.allowShrink()?options.maxLowering():0;
+    double[] original={nodes[0].position().y(),nodes[2].position().y(),nodes[4].position().y()};
+    double[] levels=original.clone();Integer[] order={0,1,2};
+    Arrays.sort(order,Comparator.<Integer>comparingDouble(i->original[i]).thenComparing(Comparator.reverseOrder()));
+    for(int i=1;i<3;i++)levels[order[i]]=Math.max(original[order[i]]-drop,levels[order[i-1]]+gap);
+    return levels;
   }
   public static Plan plan(Node[] nodes,Settings[] settings,Options options){return plan(nodes,settings,options,Arrays.stream(nodes).mapToDouble(v->v.position().y()).min().orElseThrow());}
   public static Plan plan(Node[] nodes,Settings[] settings,Options options,double baseHeight){return plan(nodes,settings,options,baseHeight,null);}
