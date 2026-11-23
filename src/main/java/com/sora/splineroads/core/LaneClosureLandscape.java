@@ -21,7 +21,7 @@ public final class LaneClosureLandscape {
       for(double across:new double[]{-.35,0,.35}){
         V p=lane.position().add(at.left().mul(across*center.width()));
         double top=ground.top(p.x(),p.z(),p.y());
-        if(!Double.isFinite(top)||p.y()-top>threshold)unsupported++;
+        if(!Double.isFinite(top)||p.y()-top>threshold+1e-6)unsupported++;
       }
     }
     // A one-block construction spine or a missing center block cannot classify the
@@ -34,12 +34,15 @@ public final class LaneClosureLandscape {
     if(mesh.settings().structure()==Structure.TUNNEL)return List.of();
     var raw=LaneSections.reference(mesh);var result=new ArrayList<Part>();
     var intervals=closedIntervals(mesh,ground);
+    var plantable=mesh.settings().options().lanePoints().cuts().stream().filter(c->!c.underpass()&&ground.closedLanePlanting(c.connection())).toList();
     var eligible=new ArrayList<Interval>();
     for(var cut:intervals){
       var lane=List.of(cut.lane());double start=Double.NaN;
       for(double a=cut.begin();a<cut.end()-1e-7;a+=1){
         double b=Math.min(a+1,cut.end());
-        boolean clear=!raised(mesh,cut.lane(),(a+b)/2,ground)&&bed(raw,lane,a,b,1,1).stream().noneMatch(ground::blocked);
+        double station=(a+b)/2;
+        boolean clear=plantable.stream().anyMatch(c->c.lane()==cut.lane()&&station>=Math.min(c.begin(),c.end())&&station<Math.max(c.begin(),c.end()))
+            &&!raised(mesh,cut.lane(),station,ground)&&bed(raw,lane,a,b,1,1).stream().noneMatch(ground::blocked);
         if(clear&&Double.isNaN(start))start=a;
         if((!clear||b>=cut.end())&&Double.isFinite(start)){
           double end=clear?b:a;
@@ -57,12 +60,12 @@ public final class LaneClosureLandscape {
         var onGround=band.slots().stream().filter(slot->!raised(mesh,slot,station,ground)).toList();
         for(var slots:adjacent(raw,onGround,station)){
           boolean green=planted.stream().anyMatch(i->slots.contains(i.lane())&&station>=i.begin()&&station<i.end());
-          var first=cross(raw,slots,a);var last=cross(raw,slots,b);
+          var first=pavingCross(raw,slots,a);var last=pavingCross(raw,slots,b);
           double depth=Math.max(.5,raw.settings().thickness()+.125);
           var pads=new ArrayList<Part>();
           RoadStructures.plantingLayer(pads,first.center().add(new V(0,-depth,0)),last.center().add(new V(0,-depth,0)),
               first.left(),last.left(),first.width(),last.width(),depth+(green?.02:0),Material.CONCRETE,green?"":"sr:closed_lane_pavement");
-          for(var pad:pads)addUnblocked(result,pad,ground,0);
+          for(var pad:pads)for(var piece:ground.pavingSpans(pad))addUnblocked(result,piece,ground,0);
         }
       }
     }
@@ -70,6 +73,15 @@ public final class LaneClosureLandscape {
   }
   private record Band(List<Integer> slots,double from,double to){}
   private record Cross(V center,V left,double width){}
+  private static Cross pavingCross(Mesh raw,List<Integer> slots,double station){
+    var at=RoadStructures.sample(raw,station);var lane=cross(raw,slots,station);var layout=RoadProfile.layout(raw,at);
+    double center=lane.center().sub(at.center()).dot(at.left()),lo=center-lane.width()/2,hi=center+lane.width()/2;
+    // LaneDeck opens the redundant outside shoulder along an outer closed slot.
+    // Its ground infill must reach that same edge or a strip of terrain remains.
+    if(lo<=layout.motorMin()+1e-6&&(layout.cycleWidth()<.01||!layout.catalog().twoWay()&&layout.outside()>0))lo=Math.min(lo,-at.halfWidth());
+    if(hi>=layout.motorMax()-1e-6&&(layout.cycleWidth()<.01||!layout.catalog().twoWay()&&layout.outside()<0))hi=Math.max(hi,at.halfWidth());
+    return new Cross(at.at((lo+hi)/2,0),at.left(),hi-lo);
+  }
   private static Cross cross(Mesh raw,List<Integer> slots,double station){
     var at=RoadStructures.sample(raw,station);
     double lo=Double.POSITIVE_INFINITY,hi=Double.NEGATIVE_INFINITY;
@@ -150,7 +162,7 @@ public final class LaneClosureLandscape {
   private record Interval(int lane,double begin,double end){}
   private static List<Interval> closedIntervals(Mesh mesh,Ground ground){
     var raw=LaneSections.reference(mesh);var intervals=new ArrayList<Interval>();
-    for(var cut:mesh.settings().options().lanePoints().cuts())if(cut.temporary()&&cut.rectangular()&&!cut.underpass()&&!connectorAddition(mesh,cut)&&ground.closedLanePlanting(cut.connection())){
+    for(var cut:mesh.settings().options().lanePoints().cuts())if(cut.temporary()&&cut.rectangular()&&!connectorAddition(mesh,cut)){
       double a=Math.max(raw.first().distance(),Math.min(cut.begin(),cut.end()));
       double b=Math.min(raw.last().distance(),Math.max(cut.begin(),cut.end()));
       if(b>a+1e-7)intervals.add(new Interval(cut.lane(),a,b));

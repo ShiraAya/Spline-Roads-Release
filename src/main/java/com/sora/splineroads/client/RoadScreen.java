@@ -654,6 +654,7 @@ public final class RoadScreen extends Screen {
     if(payload.getString("Kind").equals("armRoad")){t=new CompoundTag();t.putString("Action","junctionRoad");t.putUUID("Id",payload.getUUID("Id"));t.putInt("Arm",payload.getInt("Arm"));t.putInt("Signature",payload.getInt("Signature"));t.put("Settings",payload.getCompound("Settings").copy());}
     if(sideRoad())t=com.sora.splineroads.world.SideRoads.action(payload);
     if(laneRoad()){t=new CompoundTag();t.putString("Action","laneRampRoad");t.putUUID("Id",payload.getUUID("Id"));t.putInt("Signature",payload.getInt("Signature"));t.put("Settings",payload.getCompound("Settings").copy());}
+    if(t.contains("Settings"))t.put("Settings",com.sora.splineroads.net.RoadDraft.editableSettings(t.getCompound("Settings")));
     pending = true;
     save.active = false;
     status = "正在建造并清理障碍…";

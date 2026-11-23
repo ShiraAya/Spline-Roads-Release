@@ -31,7 +31,18 @@ public final class RoadRailSlabClipping {
       }
       changed|=!pieces.equals(List.of(part));result.addAll(pieces);
     }
-    return changed?List.copyOf(result):parts;
+    // Clipping is the last operation on the rails. It can expose new ends after
+    // StructurePlanner's terminal pass, so cap the surviving bars here as well.
+    RoadStructures.terminalPosts(result,new Ground(){
+      public double top(double x,double z,double y){return y;}
+      public boolean joined(com.sora.splineroads.core.RoadGeometry.V p){return false;}
+      public boolean blocked(Part p){return neighbors.stream().anyMatch(m->RoadClearance.structureInDeck(p,m));}
+      public boolean unionRails(){return true;}
+      public boolean railBlocked(Part p,com.sora.splineroads.core.RoadGeometry.V a,com.sora.splineroads.core.RoadGeometry.V b){
+        return neighbors.stream().anyMatch(m->RoadClearance.structureInDeck(p,m));
+      }
+    });
+    return changed||result.size()!=parts.size()?List.copyOf(result):parts;
   }
   private RoadRailSlabClipping(){}
 }

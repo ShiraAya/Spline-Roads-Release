@@ -37,6 +37,7 @@ public final class RoadPreviewGround implements RoadStructures.Ground {
   private final RoadPierSpacing pierSpacing;
   private final RoadRailJoin railJoin,capMouths;
   private final Map<Mesh,Mesh> motorDecks=new IdentityHashMap<>();
+  private final Map<Mesh,RoadShellOpening> pavingCuts=new IdentityHashMap<>();
   private final Set<Mesh> joinedRoads=Collections.newSetFromMap(new IdentityHashMap<>());
   private final Map<RoadStructures.Part,Mesh> joinedPaving=new IdentityHashMap<>();
   private final Map<BlockPos,List<AABB>> columns=new HashMap<>();
@@ -243,6 +244,17 @@ public final class RoadPreviewGround implements RoadStructures.Ground {
   }
   @Override public double surface(double x,double z,double roadY){
     return surfaceCache.computeIfAbsent(new SurfaceProbe(x,z,roadY),p->surfaceUncached(x,z,roadY));
+  }
+  @Override public double walkwaySurface(double x,double z,double roadY){return sidewalkSolids.surface(x,z,roadY);}
+  @Override public List<RoadStructures.Part> pavingSpans(RoadStructures.Part part){
+    List<RoadStructures.Part> pieces=List.of(part);
+    for(var other:nearby){
+      if(pieces.isEmpty())break;
+      if(pieces.stream().noneMatch(p->RoadClearance.structureInvades(p,other,RoadStructureClearance.headroom(other))))continue;
+      var cutter=pavingCuts.computeIfAbsent(other,m->RoadShellOpening.travel(m,0,m.length(),d->RoadStructureClearance.headroom(m)));
+      pieces=pieces.stream().flatMap(p->cutter.cut(p).stream()).toList();
+    }
+    return pieces;
   }
   private record SurfaceProbe(double x,double z,double y){}
   private final Map<SurfaceProbe,Double> surfaceCache=new HashMap<>();

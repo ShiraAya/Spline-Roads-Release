@@ -96,4 +96,12 @@ public final class TactileSurface {
     }
     return List.copyOf(out);
   }
+  /** Final walls belong to another road too; texture depth ordering cannot hide a physical overlap. */
+  public static List<Part> outsideWalls(List<Part> parts,List<Part> surroundings){
+    var walls=surroundings.stream().filter(p->p.material()==Material.TUNNEL).toList();
+    if(walls.isEmpty()||parts.stream().noneMatch(p->p.material()==Material.TACTILE))return parts;
+    var cutter=RoadShellOpening.solids(walls);var out=new ArrayList<Part>();
+    for(var p:parts)if(p.material()==Material.TACTILE)out.addAll(cutter.cut(p));else out.add(p);
+    return out.equals(parts)?parts:List.copyOf(out);
+  }
 }

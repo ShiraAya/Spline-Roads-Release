@@ -11,6 +11,24 @@ import net.minecraft.server.level.*;
  * Three or four anchors, compact editable specification, and a single validated world transaction.
  */
 public final class Interchanges {
+  /** Check before logical-road remapping and again at the command boundary. */
+  public static void requireRoadEditor(RoadData data,UUID id){
+    if(id==null)return;
+    var built=data.index.roads.get(id);var road=built==null?data.streets.get(id):built.record;
+    UUID group=InterchangeJunctions.parent(data,road==null?id:road.assembly());
+    if(group!=null&&data.interchanges.containsKey(group)){
+      var saved=data.interchanges.get(group);
+      if(saved.getBoolean("YJunction"))throw new IllegalArgumentException("请用普通路口编辑器右键此 Y 字路口");
+      if(!saved.getBoolean("ElevatedAccess"))throw new IllegalArgumentException("此路段属于自动立交，请用立交连接器右键整体编辑");
+    }
+    if(road!=null&&ParallelSpui.groupAt(data,road,road.start().position())!=null)
+      throw new IllegalArgumentException("此路段属于自动立交，请用立交连接器右键整体编辑");
+    for(var saved:data.interchanges.values()){
+      if(ParallelSpui.active(saved)&&id.equals(saved.getCompound("ParallelJunction").getUUID("Center")))throw new IllegalArgumentException("此路段属于自动立交，请用立交连接器右键整体编辑");
+      for(var value:saved.getList("OccupiedRoads",net.minecraft.nbt.Tag.TAG_COMPOUND))
+        if(id.equals(((CompoundTag)value).getUUID("Road")))throw new IllegalArgumentException("此路段属于自动立交，请用立交连接器右键整体编辑");
+    }
+  }
   public static CompoundTag descriptor(RoadData data,UUID id){
     var saved=data.interchanges.get(InterchangeJunctions.parent(data,id));
     if(saved==null)throw new IllegalArgumentException("道路组合已不存在");

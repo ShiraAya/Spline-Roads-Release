@@ -134,14 +134,11 @@ public final class LaneRamps {
     // Rechecking an unchanged connector must first validate its saved alignment.
     // Searching from scratch can choose a different family or reject an old valid
     // layout after a candidate ordering update. This still runs current clearance.
-    // A guardrail-only edit does not request a different vertical route. A valid
-    // saved AUTO underpass may be non-monotone because it clears a fixed host.
-    boolean railOnlyEdit=old!=null&&edited!=null
-        &&old.settings().options(old.settings().options().outerRail(edited.options().outerRail())).equals(edited);
+    // Revalidate old AUTO crests even on a furniture-only save. Actual obstacle
+    // bounds can reproduce an underpass; a saved bump is not itself a constraint.
     if(old!=null&&(edited==null||old.settings().options().ends().start()!=null&&old.settings().options().ends().end()!=null)&&sameRoute(LaneTopology.metadata(old).link(),link)&&base.width()==old.settings().width()
         &&base.thickness()==old.settings().thickness()&&base.style()==old.settings().style()
-        &&(CURRENT.get()!=null&&CURRENT.get().retainProfile||link.options().elevation()==LanePoints.Elevation.KEEP||!LaneTopology.metadata(old).link().options().equals(link.options())||!verticalKink(old.mesh()))
-        &&(railOnlyEdit||CURRENT.get()!=null&&CURRENT.get().retainProfile||link.options().elevation()!=LanePoints.Elevation.AUTO||monotone(old.mesh())))try{
+        &&(CURRENT.get()!=null&&CURRENT.get().retainProfile||link.options().elevation()==LanePoints.Elevation.AUTO||link.options().elevation()==LanePoints.Elevation.KEEP||!LaneTopology.metadata(old).link().options().equals(link.options())||!verticalKink(old.mesh())))try{
       var kept=old.settings(base);var candidate=kept.mesh();
       if(!currentApproaches(candidate,all,link))throw new IllegalArgumentException("额外汇入/汇出渐变长度已更新");
       var context=LaneCrossSections.staged(all,id,link,candidate);
@@ -163,7 +160,7 @@ public final class LaneRamps {
       var to=link.to().road()==null?null:resolvedArrival(context,link,id);
       if(LaneRampAlignment.axis(candidate,true).distance(from.position())<1e-5
           &&LaneRampAlignment.axis(candidate,false).distance(to==null?link.junctionMouth():to.position())<1e-5){
-        if(CURRENT.get()!=null&&CURRENT.get().retainProfile){
+        if(CURRENT.get()!=null&&CURRENT.get().retainProfile||link.options().elevation()==LanePoints.Elevation.AUTO&&!monotone(candidate)){
           // Growing a host can expose a new clearance constraint under an
           // otherwise valid ramp. Refit this horizontal route before searching
           // hundreds of different landing stations and turn families again.
@@ -505,9 +502,9 @@ public final class LaneRamps {
       else {var points=new ArrayList<Sample>();for(var at:host.samples()){
         var lane=(first?link.options().sourceExtra():link.options().targetExtra())?LaneRampApproach.outerLane(host,at.distance(),leg.slot()):LanePoints.group(host,at.distance(),leg.slot(),link.options().lanes());
         double center=lane.position().sub(at.center()).dot(at.left()),low=center-lane.width()/2,high=center+lane.width()/2;
-        // A highway's outside emergency shoulder is part of the joining surface.
+        // The outside shoulder is part of an open BRANCH/FLOW joining surface.
         // Do not start climbing/descending while the ramp still crosses it.
-        if(RoadProfile.highway(host.settings().style())){var layout=RoadProfile.layout(host,at);
+        if(RoadProfile.highway(host.settings().style())||(first?link.options().departure()==LanePoints.Departure.BRANCH:link.options().arrival()==LanePoints.Arrival.FLOW)){var layout=RoadProfile.layout(host,at);
           if(Math.abs(low-layout.motorMin())<.01)low=-at.halfWidth();
           if(Math.abs(high-layout.motorMax())<.01)high=at.halfWidth();
         }
@@ -722,6 +719,10 @@ public final class LaneRamps {
     // joining floor is shared slab volume, not a second overhead obstacle.
     // Rails, piers and any concrete above the ramp surface remain constraints.
     var structures=start||end?road.structures().stream().filter(p->!RoadClearance.joiningFloor(p,road.mesh(),mesh)).toList():road.structures();
+    // The host is rebuilt with this connector. Its footway is clipped by the
+    // same deck/height rule during paving, so its old slab cannot force a hump.
+    // Keep all surviving pieces and every unrelated road's paving as obstacles.
+    if(start||end)structures=new SidewalkJoins(List.of(mesh),List.of()).clip(structures);
     // AUTO hosts carry real tunnel lining too. The final structure planner opens
     // this same contiguous mouth; preview must not reject its removable wall.
     // Unrelated hosts and all lining beyond the mouth remain obstacles.
@@ -1108,7 +1109,9 @@ public final class LaneRamps {
     if(b==null||LaneTopology.metadata(b.record).link()==null)throw new IllegalArgumentException("所选匝道已不存在");
     if(player!=null)RoadData.requireOwner(player,b.record.owner());
     if(t.getInt("Signature")!=b.record.header().hashCode())throw new IllegalArgumentException("道路已改变，请重新打开编辑器");
-    var next=reconfigure(data,b.record,RoadRecord.readSettings(t.getCompound("Settings")),LaneTopology.records(data));
+    var current=RoadRecord.writeSettings(b.record.settings());
+    var settings=com.sora.splineroads.net.RoadDraft.reconcileSettings(com.sora.splineroads.net.RoadDraft.editableSettings(current),t.getCompound("Settings"),current);
+    var next=reconfigure(data,b.record,RoadRecord.readSettings(settings),LaneTopology.records(data));
     build(data,level,player,next);return "匝道路面与附属设置已保存，车道点引用保留";
   }
   private record AssemblyRequest(Set<BlockPos> endpoints,List<RoadData.NodeMove> moves){}

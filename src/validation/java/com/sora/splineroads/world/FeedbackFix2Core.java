@@ -93,7 +93,14 @@ public final class FeedbackFix2Core {
    check(!remains.isEmpty()&&Math.abs(remains.stream().flatMap(p->p.top().stream()).mapToDouble(V::y).max().orElseThrow()-top)<1e-7,"slab cut deleted the exposed post top");
    preservedPosts++;
   }
-  check(preservedPosts>0,"post retention fixture did not exercise an embedded foot");
+  // New feedback worlds may already contain the repaired posts. Always retain a
+  // positive embedded-foot control instead of depending on old damaged geometry.
+  var position=LanePoints.lane(road.mesh,100,0).position().add(new V(0,-.5,0));
+  var embedded=new Part(position,position.add(new V(0,0,.16)),.16,1.08,false,Material.DARK_STEEL);
+  check(RoadClearance.structureInDeck(embedded,road.mesh),"embedded post control misses deck");
+  var retained=RoadRailSlabClipping.clip(List.of(embedded),List.of(road.mesh));
+  check(!retained.isEmpty()&&retained.stream().noneMatch(p->RoadClearance.structureInDeck(p,road.mesh)),"embedded post control not clipped");
+  check(Math.abs(retained.stream().flatMap(p->p.top().stream()).mapToDouble(V::y).max().orElseThrow()-position.y()-1.08)<1e-7,"embedded post control loses exposed top");
   System.out.println("FIX2_POST_RETENTION_PASS count="+preservedPosts);
   System.out.println("FIX2_RAIL_SLAB_PASS before="+intersections+" after=0");
   var midpoint=RoadStructures.sample(ramp.mesh(),ramp.mesh().length()/2);var left=midpoint.left();

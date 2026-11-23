@@ -57,7 +57,7 @@ public final class RoadDraft {
     return out;
   }
 
-  private static CompoundTag editableSettings(CompoundTag settings) {
+  public static CompoundTag editableSettings(CompoundTag settings) {
     var out=settings.copy();
     for(String key:List.of("AttachedRoadPoints","LanePointsV2","LaneLines","HideArrows"))out.remove(key);
     var infra=out.getCompound("Infrastructure");for(String key:List.of("GantryEdits","FixedStations","Signs"))infra.remove(key);
@@ -101,6 +101,8 @@ public final class RoadDraft {
         node ? List.of("Pos", "Node") : List.of("A", "B", "Id", "Settings", "BaseSettings", "LevelEnds", "ForceJunction", "ForceJunctionA", "ForceJunctionB"))
       if (draft.contains(key)) out.put(key, draft.get(key).copy());
     out.putString("Action", node ? "node" : "connect");
+    if(!node)for(String key:List.of("Settings","BaseSettings"))
+      if(out.contains(key))out.put(key,editableSettings(out.getCompound(key)));
     return out;
   }
 

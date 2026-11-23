@@ -201,6 +201,9 @@ public final class RoadStructures {
     default Mesh terrainReference(Mesh mesh){return mesh;}
     /** Highest solid terrain below the deck; NaN means no valid foundation in range. */
     double top(double x, double z, double deckY);
+    /** A nearby paved sidewalk can retain a shallow cut even before terrain reaches two metres. */
+    default double walkwaySurface(double x,double z,double roadY){return Double.NaN;}
+    default List<Part> pavingSpans(Part part){return List.of(part);}
 
     /** Physical bearing for the complete pier/plinth footprint. Terrain
      * classification still uses top(), independently of a lower road's cut. */
@@ -795,7 +798,7 @@ public final class RoadStructures {
     int unsupported=0;
     for(int x=-1;x<=1;x++)for(int z=-1;z<=1;z++)if(x!=0||z!=0) {
       double near=ground.top(point.x()+x*.65,point.z()+z*.65,point.y());
-      if(Double.isNaN(near)||point.y()-near>threshold)unsupported++;
+      if(Double.isNaN(near)||point.y()-near>threshold+1e-6)unsupported++;
     }
     return unsupported>=5;
   }
@@ -835,7 +838,7 @@ public final class RoadStructures {
     int missing=0;
     for(double fraction:new double[]{.35,.65,.9}){
       V p=at.at(side*at.halfWidth()*fraction,0);double top=ground.top(p.x(),p.z(),p.y());
-      if(!Double.isFinite(top)||p.y()-top>GROUND_CONTACT)missing++;
+      if(!Double.isFinite(top)||p.y()-top>GROUND_CONTACT+1e-6)missing++;
     }
     return missing>=2;
   }

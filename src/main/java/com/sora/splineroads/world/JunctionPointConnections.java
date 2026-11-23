@@ -29,7 +29,7 @@ public final class JunctionPointConnections {
     var point=original.settings().options().attachments().points().stream().filter(p->p.id().equals(pointId)&&!p.elevated()).findFirst().orElseThrow(()->new IllegalArgumentException("附属点已经改变"));
     V end=node.constructionNode().position(),at=RoadQueries.horizontal(original.mesh(),point.position()).sample().center(),mid=at.add(end).mul(.5);
     if(at.sub(end).horizontalLength()<4)throw new IllegalArgumentException("两连接点没有足够的道路空间");
-    var seam=BlockPos.containing(mid.x(),mid.y(),mid.z());if(level.getBlockEntity(seam) instanceof NodeEntity)throw new IllegalArgumentException("连接中点已有端点，请调整连接位置");
+    var seam=BlockPos.containing(mid.x(),mid.y(),mid.z());if(RoadBuildWorld.entity(level,seam) instanceof NodeEntity)throw new IllegalArgumentException("连接中点已有端点，请调整连接位置");
     t.putLong("Branch",seam.asLong());t.put("MarkerNode",RoadRecord.writeNode(node.constructionNode()));t.put("BranchNode",RoadRecord.writeNode(new Node(mid,RoadPlanner.yaw(at.sub(end)),0)));
     t=OneSidedJunctions.fresh(level,player,t,original,RoadRecord.readNode(t.getCompound("BranchNode")));
     var graph=AutoJunctions.context(data,Set.of(marker,seam));t.put("MarkerGraph",graph);t.putInt("MarkerSignature",graph.hashCode());

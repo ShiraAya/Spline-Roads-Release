@@ -1545,6 +1545,8 @@ public final class RoadRenderer {
       var resolved=RoadStreetscape.resolve(mesh,ground);
       var parts=RoadAutoTunnels.enclose(resolved,ground,RoadStructures.plan(resolved,ground,phase));
       parts=RoadRailSlabClipping.clip(parts,roads.stream().filter(r->!r.record.id().equals(selected)&&com.sora.splineroads.world.RoadIndex.overlapXZ(resolved,r.mesh,3)).map(r->r.mesh).toList());
+      var walls=new ArrayList<>(parts);roads.stream().filter(r->!r.record.id().equals(selected)&&com.sora.splineroads.world.RoadIndex.overlapXZ(resolved,r.mesh,12)).forEach(r->walls.addAll(r.record.structures()));
+      parts=TactileSurface.outsideWalls(parts,walls);
       List<RoadSurface.Face> faces = new ArrayList<>();
       for (var part : RoadSignVisibility.parts(resolved,parts)){RoadPlanningBudget.check();if(snapshot.visible(part))faces.addAll(part.faces());}
       return new FurnitureResult(List.copyOf(faces),ground.sources(),"");

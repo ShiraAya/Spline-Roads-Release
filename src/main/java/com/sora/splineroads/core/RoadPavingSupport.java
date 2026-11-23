@@ -28,6 +28,15 @@ public final class RoadPavingSupport {
   private static int lo(List<V> p,boolean x){return (int)Math.floor(p.stream().mapToDouble(v->x?v.x():v.z()).min().orElseThrow()/16);}
   private static int hi(List<V> p,boolean x){return (int)Math.floor(p.stream().mapToDouble(v->x?v.x():v.z()).max().orElseThrow()/16);}
   private static long key(int x,int z){return ((long)x<<32)^(z&0xffffffffL);}
+  public double surface(double x,double z,double roadY){
+    var point=new V(x,roadY,z);double top=Double.NaN;
+    for(var patch:grid.getOrDefault(key((int)Math.floor(x/16),(int)Math.floor(z/16)),List.of())){
+      if(!Double.isFinite(TactileSurface.triangle(point,patch.top().get(0),patch.top().get(1),patch.top().get(2))))continue;
+      double y=patch.height(point);
+      if(y>roadY+.25&&y<=roadY+RoadAutoTunnels.HEADROOM&&(!Double.isFinite(top)||y>top))top=y;
+    }
+    return top;
+  }
   private List<Patch> near(List<V> base){
     var found=new LinkedHashSet<Patch>();
     for(int x=lo(base,true);x<=hi(base,true);x++)for(int z=lo(base,false);z<=hi(base,false);z++)found.addAll(grid.getOrDefault(key(x,z),List.of()));

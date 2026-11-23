@@ -66,6 +66,7 @@ public final class RoadAutoTunnels {
   public static boolean below(Mesh mesh,Sample at,Ground ground){return below(mesh,at,ground,0);}
   public static boolean below(Mesh mesh,Sample at,Ground ground,int side){
     if(below(at,ground,side,minCutDepth(mesh)))return true;
+    for(int s:side==0?new int[]{-1,1}:new int[]{side})if(Double.isFinite(walkwayTop(at,s,ground)))return true;
     // Imported rails can already occupy a cleared trench. Its untouched
     // shoulders still establish a one-block cut even when the deck is air.
     if(mesh.settings().style()==Style.RAILBED)for(int s:side==0?new int[]{-1,1}:new int[]{side})for(double offset:new double[]{.25,.75,1.25}){
@@ -102,11 +103,17 @@ public final class RoadAutoTunnels {
       // A deep hillside cut needs a roof even when its downhill shoulder is
       // exposed. Otherwise it becomes an arbitrarily tall retaining wall.
       roof |= Math.max(left,right)+WALL_LIP>HEADROOM+1e-7;
+      // The footway is the retained surface, not a roof over the driving lane.
+      // Keep the true wall height below; only its classification has a minimum.
+      if(Double.isFinite(walkwayTop(at,1,ground)))left=Math.max(left,minCutDepth(mesh));
+      if(Double.isFinite(walkwayTop(at,-1,ground)))right=Math.max(right,minCutDepth(mesh));
       out.add(new Section(d,end,roof,left,right,Math.min(RoadStructures.MAX_DROP,clearance)));
     }
     int count=(int)Math.ceil(mesh.length());int[] raw=new int[count];Section[] original=new Section[count];
     for(var section:out){int i=(int)Math.round(section.from());raw[i]=section.roof()?2:1;original[i]=section;}
     int[] kinds=normalize(raw);var continuous=new ArrayList<Section>();
+    for(int i=0;i<count;i++)if(original[i]!=null){var at=RoadStructures.sample(mesh,(original[i].from()+original[i].to())/2);
+      if(kinds[i]==0&&(Double.isFinite(walkwayTop(at,1,ground))||Double.isFinite(walkwayTop(at,-1,ground))))kinds[i]=1;}
     for(int i=0;i<count;i++){
       if(kinds[i]==0&&original[i]==null)continue;
       var old=original[i];double left=old==null?0:old.leftDepth(),right=old==null?0:old.rightDepth(),clear=old==null?HEADROOM:old.clearance();
@@ -242,6 +249,9 @@ public final class RoadAutoTunnels {
           if(!roofStarts.contains(s.to()))tb=Math.min(tb,pb.y()+HEADROOM);
           ta=taperWall(sideEdges.get(side),s.from(),pa.y(),ta);
           tb=taperWall(sideEdges.get(side),s.to(),pb.y(),tb);
+          double wa=walkwayTop(a,side,ground),wb=walkwayTop(b,side,ground);
+          if(Double.isFinite(wa))ta=Math.max(ta,wa+WALL_LIP);
+          if(Double.isFinite(wb))tb=Math.max(tb,wb+WALL_LIP);
         }
         // Shared absolute endpoint heights eliminate the old one-metre sawtooth on grades.
         double height=Math.min(RoadStructures.MAX_DROP,Math.max(ta-pa.y(),tb-pb.y())+mesh.settings().thickness());
@@ -285,7 +295,14 @@ public final class RoadAutoTunnels {
   private static double wallTop(Sample at,int side,Ground ground){
     double top=Double.NEGATIVE_INFINITY;
     for(double u:new double[]{0,.5,1}){V p=at.at(side*(at.halfWidth()+LINING)*u,0);double h=ground.surface(p.x(),p.z(),p.y());if(Double.isFinite(h))top=Math.max(top,h);}
+    double walk=walkwayTop(at,side,ground);if(Double.isFinite(walk))top=Math.max(top,walk);
     return Math.max(at.at(side*(at.halfWidth()+.75),0).y()+1.2,top+WALL_LIP);
+  }
+  private static double walkwayTop(Sample at,int side,Ground ground){
+    double top=Double.NaN;
+    for(double offset:new double[]{.05,.5,1,LINING}){var p=at.at(side*(at.halfWidth()+offset),0);double y=ground.walkwaySurface(p.x(),p.z(),p.y());
+      if(Double.isFinite(y)&&(!Double.isFinite(top)||y>top))top=y;}
+    return top;
   }
   private static double smoothWallTop(Mesh mesh,double station,int side,Ground ground,Map<String,Double> cache){
     double first=Math.floor(station/4)*4,last=Math.min(mesh.length(),first+4);

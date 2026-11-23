@@ -272,6 +272,7 @@ public final class RoadTool extends Item {
 
   private static void openRoad(ServerPlayer player, RoadRecord road, boolean deletion,CompoundTag command) {
     if(!deletion&&ElevatedAccessRoads.saved(RoadData.get(player.serverLevel()),road.assembly())){ElevatedAccessRoads.open(player,road.assembly());return;}
+    if(!deletion)Interchanges.requireRoadEditor(RoadData.get(player.serverLevel()),road.id());
     if(road.railway())throw new IllegalArgumentException("铁路路基请使用铁路路基连接器编辑或删除");
     java.util.function.Consumer<CompoundTag> reply=t->{com.sora.splineroads.net.RoadActionContext.echo(command,t);RoadNetwork.open(player,t);};
     try (var workChunks = RoadWorkChunks.open(player.serverLevel())) {
@@ -290,7 +291,7 @@ public final class RoadTool extends Item {
       }
       if(road.junction()!=null&&!deletion){
         var logical=JunctionRoads.logical(RoadData.get(level),road);
-        if(logical!=null){road=logical;var owner=JunctionPointConnections.group(RoadData.get(level),road.id());if(owner!=null){reply.accept(SideRoads.payload(JunctionPointConnections.payload(level,player,owner)));return;}}
+        if(logical!=null){road=logical;Interchanges.requireRoadEditor(RoadData.get(level),road.id());var owner=JunctionPointConnections.group(RoadData.get(level),road.id());if(owner!=null){reply.accept(SideRoads.payload(JunctionPointConnections.payload(level,player,owner)));return;}}
         else {reply.accept(JunctionRoads.payload(level,player,road));return;}
       }
       if (road.junction() != null) {

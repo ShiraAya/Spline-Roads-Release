@@ -1898,6 +1898,8 @@ public final class RoadData extends SavedData {
         var old=built.get(i);
         var neighbors=shellFinal.stream().filter(r->!r.record.id().equals(old.record.id())&&RoadIndex.overlapXZ(old.mesh,r.mesh,3)).map(r->r.mesh).toList();
         var clipped=com.sora.splineroads.core.RoadRailSlabClipping.clip(old.record.structures(),neighbors);
+        var walls=shellFinal.stream().filter(r->RoadIndex.overlapXZ(old.mesh,r.mesh,12)).flatMap(r->r.record.structures().stream()).filter(p->p.material()==com.sora.splineroads.core.RoadStructures.Material.TUNNEL).toList();
+        clipped=com.sora.splineroads.core.TactileSurface.outsideWalls(clipped,walls);
         if(clipped!=old.record.structures()){var next=old.structures(clipped);built.set(i,next);shellFinal.set(shellFinal.indexOf(old),next);}
       }
       var shellChanged=new HashSet<UUID>();for(var changed:built)shellChanged.add(changed.record.id());

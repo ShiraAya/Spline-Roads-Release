@@ -813,7 +813,7 @@ public final class RoadNetwork {
       case "tollBuild" -> {TollTool.selection(player,tool,t);return TollRoads.build(level,player,t);}
       case "tollDelete" -> {TollRoads.remove(level,player,t.getUUID("Id"));return "收费站已删除，原端点与外接道路保留";}
       case "lanePoint" -> {if(!(tool.getItem() instanceof LanePointTool))throw new IllegalArgumentException("请手持车道点工具");return LanePointTool.edit(level,player,t);}
-      case "laneRampRoad" -> {if(!(tool.getItem() instanceof RoadTool))throw new IllegalArgumentException("请手持道路连接器");return LaneRamps.editRoad(level,player,t);}
+      case "laneRampRoad" -> {if(!(tool.getItem() instanceof RoadTool))throw new IllegalArgumentException("请手持道路连接器");Interchanges.requireRoadEditor(data,t.getUUID("Id"));return backgroundEdit(player,t,d->LaneRamps.editRoad(level,null,t));}
       case "laneRampPreview" -> {if(!(tool.getItem() instanceof LaneRampTool))throw new IllegalArgumentException("请手持匝道连接器");RoadPlanningJobs.begin(player,tool,t);return "匝道正在后台规划";}
       case "laneRamp" -> {if(!(tool.getItem() instanceof LaneRampTool))throw new IllegalArgumentException("请手持匝道连接器");return LaneRamps.build(player,tool,t);}
       case "laneRampDeletePreview", "laneRampDelete" -> {if(!(tool.getItem() instanceof LaneRampTool))throw new IllegalArgumentException("请手持匝道连接器");return LaneRampTool.deletion(player,tool,t,action.equals("laneRampDelete"));}
@@ -837,10 +837,17 @@ public final class RoadNetwork {
         var reply=new CompoundTag();reply.putString("Kind","corridorCheck");reply.putLong("Request",t.getLong("Request"));reply.putString("Dimension",level.dimension().location().toString());reply.put("Inputs",inputs);open(player,reply);return "组合预览已检查";
       }
       case "roundabout" -> { return RoundaboutTool.build(level,player,t,tool); }
-      case "junctionRoad" -> {if(!tool.is(SplineRoads.CONNECTOR.get()))throw new IllegalArgumentException("请手持道路连接器");return JunctionRoads.build(level,player,t);}
+      case "junctionRoad" -> {if(!tool.is(SplineRoads.CONNECTOR.get()))throw new IllegalArgumentException("请手持道路连接器");Interchanges.requireRoadEditor(data,t.getUUID("Id"));return backgroundEdit(player,t,d->JunctionRoads.build(level,null,t));}
       case "elevatedAccessPreview" -> {if(!(tool.getItem() instanceof RoadTool))throw new IllegalArgumentException("请手持道路连接器");ElevatedAccessRoads.requireSelection(player,tool,t);open(player,ElevatedAccessRoads.preview(level,player,t));return "";}
       case "elevatedAccessBuild" -> {if(!(tool.getItem() instanceof RoadTool))throw new IllegalArgumentException("请手持道路连接器");ElevatedAccessRoads.requireSelection(player,tool,t);String result=ElevatedAccessRoads.build(level,player,t);for(String key:List.of("ElevatedSelection","SideMain","SidePoint","SideSelection","Start"))tool.getOrCreateTag().remove(key);return result;}
-      case "junctionSideRoad" -> {if(!tool.is(SplineRoads.CONNECTOR.get()))throw new IllegalArgumentException("请手持道路连接器");return OneSidedJunctions.buildRoadSelected(level,player,t,tool);}
+      case "junctionSideRoad" -> {
+        if(!tool.is(SplineRoads.CONNECTOR.get()))throw new IllegalArgumentException("请手持道路连接器");
+        Interchanges.requireRoadEditor(data,t.hasUUID("Id")?t.getUUID("Id"):null);
+        var submitted=tool.getOrCreateTag().copy();var privateTool=tool.copy();
+        return backgroundEdit(player,t,d->OneSidedJunctions.buildRoadSelected(level,null,t,privateTool),()->{
+          if(submitted.equals(tool.getOrCreateTag()))tool.setTag(privateTool.getOrCreateTag().copy());
+        });
+      }
       case "junction" -> {
         if (!(tool.getItem() instanceof RoundaboutTool) && !(tool.getItem() instanceof JunctionTool)) throw new IllegalArgumentException("请手持普通路口编辑器");
         if(!t.hasUUID("Id")&&!(tool.getItem() instanceof JunctionTool))throw new IllegalArgumentException("新建独立路口请使用普通路口编辑器");
@@ -881,6 +888,7 @@ public final class RoadNetwork {
       case "connect" -> {
         BlockPos a = BlockPos.of(t.getLong("A")), b = BlockPos.of(t.getLong("B"));
         UUID id = t.hasUUID("Id") ? t.getUUID("Id") : null;
+        Interchanges.requireRoadEditor(data,id);
         var settingsTag=t.getCompound("Settings");
         if(id!=null&&t.contains("BaseSettings")) {
           var current=data.editableRoad(id);
@@ -927,6 +935,18 @@ public final class RoadNetwork {
       }
       default -> throw new IllegalArgumentException("未知操作");
     }
+  }
+  private static String backgroundEdit(ServerPlayer player,CompoundTag command,java.util.function.Function<RoadData,String> operation){
+    return backgroundEdit(player,command,operation,()->{});
+  }
+  private static String backgroundEdit(ServerPlayer player,CompoundTag command,java.util.function.Function<RoadData,String> operation,Runnable success){
+    RoadBuildJobs.submit(player.serverLevel(),player,operation).whenComplete((message,failure)->{
+      if(failure!=null){logCrossingFailure(command.getString("Action"),failure instanceof RuntimeException e?e:new RuntimeException(failure));result(player,false,failure.getMessage()==null?"道路计算失败，未写入世界":failure.getMessage(),command);}
+      else {success.run();result(player,true,message,command);}
+    });
+    var pending=new CompoundTag();pending.putString("Type","buildPending");RoadActionContext.echo(command,pending);send(player,pending);
+    player.displayClientMessage(Component.literal("道路正在后台计算，可继续操作；完成后会通知你。"),false);
+    throw new RoadBuildJobs.Pending();
   }
   private static String finishConnect(ServerPlayer player,ItemStack tool,ServerLevel level,RoadData data,com.sora.splineroads.core.RoadGeometry.Settings settings,RoadRecord r){
         tool.getOrCreateTag().remove(CurveControlNodes.KEY);

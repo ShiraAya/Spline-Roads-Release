@@ -215,6 +215,7 @@ final class StructurePlanner {
     var ownBridge=new RoadSolidOverlap.Index(RoadInfrastructure.fixedBridgeParts(built.mesh,terrain).stream()
         .filter(p->p.top().stream().anyMatch(v->v.y()>RoadQueries.horizontal(built.mesh,v).sample().center().y()+.05)).toList());
     var railwayAir=RailbedStructures.catenaryClearance(built.record.settings().options().railbed().paths());
+    var pavingCuts=new IdentityHashMap<Mesh,RoadShellOpening>();
     var ground = new RoadStructures.Ground() {
               public boolean sharedDeck(){return sharedDeck;}
               public List<RoadStructures.Part> sharedSupports(Mesh mesh,Sample at,double depth,double width,double offset){
@@ -272,6 +273,17 @@ final class StructurePlanner {
                 return sidewalkSolids.foundation(center,top,width,median,()->terrain.foundation(center,top,width));
               }
               public double surface(double x,double z,double roadY){return terrain.surface(x,z,roadY);}
+              public double walkwaySurface(double x,double z,double roadY){return sidewalkSolids.surface(x,z,roadY);}
+              public List<RoadStructures.Part> pavingSpans(RoadStructures.Part part){
+                List<RoadStructures.Part> pieces=List.of(part);
+                for(var other:nearby){
+                  if(pieces.isEmpty())break;
+                  if(pieces.stream().noneMatch(p->RoadClearance.structureInvades(p,other.mesh,RoadStructureClearance.headroom(other.mesh))))continue;
+                  var cutter=pavingCuts.computeIfAbsent(other.mesh,m->RoadShellOpening.travel(m,0,m.length(),d->RoadStructureClearance.headroom(m)));
+                  pieces=pieces.stream().flatMap(p->cutter.cut(p).stream()).toList();
+                }
+                return pieces;
+              }
 
               public V railJoint(V p,V direction){return railJoin==null?null:railJoin.joint(p,direction);}
               public boolean railPost(V p){return railJoin==null||railJoin.ownsPost(p);}

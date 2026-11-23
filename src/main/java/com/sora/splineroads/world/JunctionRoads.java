@@ -65,7 +65,10 @@ public final class JunctionRoads {
     if(command.getInt("Signature")!=fresh.getCompound("Spec").hashCode())throw new IllegalArgumentException("路口已改变，请重新打开这段道路");
     int arm=command.getInt("Arm");var spec=JunctionCodec.read(fresh.getCompound("Spec"));
     if(arm<0||arm>=spec.arms().size())throw new IllegalArgumentException("接入路段已不存在");
-    var arms=new ArrayList<>(spec.arms());arms.set(arm,command.contains("Settings")?change(arms.get(arm),RoadRecord.readSettings(command.getCompound("Settings"))):change(arms.get(arm),command.getCompound("Fields")));
+    var arms=new ArrayList<>(spec.arms());
+    var current=RoadRecord.writeSettings(editable(arms.get(arm)));
+    var settings=com.sora.splineroads.net.RoadDraft.reconcileSettings(com.sora.splineroads.net.RoadDraft.editableSettings(current),command.getCompound("Settings"),current);
+    arms.set(arm,command.contains("Settings")?change(arms.get(arm),RoadRecord.readSettings(settings)):change(arms.get(arm),command.getCompound("Fields")));
     fresh.put("Spec",JunctionCodec.write(spec.arms(arms)));Junctions.buildRoad(level,player,fresh,arm);
     return "所选接入道路已更新；信号配时和通行关系由普通路口编辑器管理";
   }
