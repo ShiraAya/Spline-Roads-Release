@@ -1,10 +1,10 @@
-# Spline Roads 2.1.1
+# Spline Roads 2.2
 
 Spline Roads 是 Minecraft 的道路建造模组，提供样条道路、路口、匝道、立交、桥隧、标志与信号灯，以及可选的 MTR 铁路路基联动。
 
 ## 安装
 
-使用 Minecraft 1.20.1、Forge 47.4.20 和 Java 17。把 `splineroads-2.1.1.jar` 放入 `mods` 目录。联机时，客户端和服务端使用同一版本。MTR 4.0.5 为可选依赖。
+使用 Minecraft 1.20.1、Forge 47.4.20 和 Java 17。把 `splineroads-2.2.jar` 放入 `mods` 目录。联机时，客户端和服务端使用同一版本。MTR 4.0.5 为可选依赖。
 
 ## 构建
 
