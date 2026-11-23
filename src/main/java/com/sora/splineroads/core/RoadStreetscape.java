@@ -299,13 +299,20 @@ public final class RoadStreetscape {
     // but do not leave an exterior lamp/bracket suspended beside that opening.
     if(LaneDeck.outerOpening(mesh,at.distance(),side)&&Math.abs(lateral)>at.halfWidth()-1)return;
     V foot=at.at(lateral,-up);if(g.joined(foot)||g.furnitureClear(foot)||g.lampClear(foot))return;
+    // GROUND controls grading, but an outboard lamp may still stand over air.
+    // Use a deck bracket when no pavement/terrain supports its ordinary foot.
+    if(!bracket&&mesh.settings().structure()==Structure.GROUND&&up==0
+        &&Math.abs(lateral)>at.halfWidth()
+        &&RoadStructures.elevated(mesh,foot,g.top(foot.x(),foot.z(),foot.y()),g))bracket=true;
     var parts=new ArrayList<>(lamp(foot,at.left().mul(-side),style));
     if(bracket){
       // Recess the cross-deck support below the paint; only the outboard riser reaches the pedestal.
       parts.add(new Part(at.at(side*(at.halfWidth()-.55),.47),foot.add(new V(0,-.47,0)),.7,.35,false,Material.CONCRETE));
       parts.add(new Part(foot.add(new V(0,-.12,0)),foot.add(new V(0,-.12,0)),.38,.12,true,Material.CONCRETE));
     }
-    if(parts.stream().noneMatch(p->g.lampBlocked(p,at)))out.addAll(parts);
+    String anchor=parts.get(0).model();
+    var mounted=parts.stream().map(p->new Part(p.a(),p.b(),p.width(),p.height(),p.pier(),p.material(),p.frameA(),p.frameB(),anchor,p.heights())).toList();
+    if(mounted.stream().noneMatch(p->g.lampBlocked(p,at)))out.addAll(mounted);
   }
   /** The complete paved ribbon includes legitimate lamp seats (median, separator
    * and kerb). Permit only the generated lamp's own transverse mounting section.

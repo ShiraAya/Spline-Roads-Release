@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.sora.splineroads'
-version = '2.1.2-fix8'
+version = '2.1.2-fix9'
 base { archivesName = 'splineroads' }
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
@@ -285,5 +285,13 @@ tasks.register('validateFix8', JavaExec) {
     classpath = sourceSets.validation.runtimeClasspath
     mainClass = 'com.sora.splineroads.world.FeedbackFix8'
     args 'F:/SR-feedback-2.1.2-fix8/feedback-original.dat'
+    jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
+}
+
+tasks.register('validateFix9', JavaExec) {
+    dependsOn validationClasses
+    classpath = sourceSets.validation.runtimeClasspath
+    mainClass = 'com.sora.splineroads.world.FeedbackFix9'
+    args 'F:/SR-feedback-2.1.2-fix9/feedback-original.dat'
     jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
 }
