@@ -57,6 +57,7 @@ final class ContinuousFit {
     // Refinement is optional only after a complete, validated feasible plan exists.
     // A pathological failed candidate must not hide that usable preview indefinitely.
     try(var refinement=RoadPlanningBudget.open("立交有效方案范围收紧",3)){
+    RoadPlanningBudget.phase("已找到有效布局，正在收紧主路占用范围");
     for(int pass=0;pass<2;pass++)for(int i=0;i<reference.length;i++){
       if(!captured(t,i))continue;
       double high=best.anchors().get(i).position().sub(center).horizontalLength(),low=minimum;if(high<=low+.5)continue;

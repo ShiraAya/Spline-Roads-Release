@@ -709,7 +709,10 @@ public final class InterchangePlanner {
       int first=stackStation(entry,.22),last=stackStation(exit,.78);
       V a=entry.points.get(first),b=exit.points.get(last);
       V diagonal=direction(ARMS[left.from].mul(-1).add(ARMS[left.to])).horizontalUnit();
-      V crossing=world(new V(0,0,0)).add(diagonal.left().mul(-traffic*(options.width()/2+1)));
+      // diagonal is already in world coordinates. traffic includes the host
+      // chart determinant for arm indexing; applying it here mirrors the
+      // physical carriageway twice when either selected axis is reversed.
+      V crossing=world(new V(0,0,0)).add(diagonal.left().mul((options.leftTraffic?1:-1)*(options.width()/2+1)));
       double run=Math.min(a.sub(crossing).horizontalLength(),b.sub(crossing).horizontalLength())*.14;
       var middle=curve(List.of(new Knot(a,routeTangent(entry,first)),
           new Knot(crossing.sub(diagonal.mul(run)),diagonal),
@@ -1770,6 +1773,7 @@ public final class InterchangePlanner {
         }
       }
     }
+    RoadPlanningBudget.phase("校验交叉净高与平滑纵坡");
     double[] y=InterchangeGradeProfile.smooth(preferred,lower,upper,edges,offset,distance);var result=new ArrayList<Mesh>();
     for(int ri=0;ri<count;ri++){
       var r=routes.get(ri);var samples=new ArrayList<Sample>();

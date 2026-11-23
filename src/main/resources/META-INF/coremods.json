@@ -4,5 +4,6 @@
   "splineroads_client_light_budget": "coremods/client_light_budget.js",
   "splineroads_light_snapshot": "coremods/light_snapshot.js",
   "splineroads_palette_scratch": "coremods/palette_scratch.js",
-  "splineroads_pjm_region_io": "coremods/pjm_region_io.js"
+  "splineroads_pjm_region_io": "coremods/pjm_region_io.js",
+  "splineroads_xaero_roads": "coremods/xaero_roads.js"
 }

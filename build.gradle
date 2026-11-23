@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.sora.splineroads'
-version = '2.1.2-fix6'
+version = '2.1.2-fix7'
 base { archivesName = 'splineroads' }
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
@@ -67,6 +67,28 @@ tasks.register('validateFix4Saved', JavaExec) {
     jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
 }
 
+tasks.register('inspectFix7', JavaExec) {
+    dependsOn validationClasses
+    classpath = sourceSets.validation.runtimeClasspath
+    mainClass = 'com.sora.splineroads.world.FeedbackFix7Inspect'
+    args 'F:/SR-feedback-2.1.2-fix7/feedback-original.dat'
+    jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
+}
+tasks.register('validateFix7Planning', JavaExec) {
+    dependsOn validationClasses
+    classpath = sourceSets.validation.runtimeClasspath
+    mainClass = 'com.sora.splineroads.world.FeedbackFix7Planning'
+    args 'F:/SR-feedback-2.1.2-fix7/feedback-original.dat'
+    jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4', '-Dsr.fitDebug=true'
+    if (project.hasProperty('feedbackAbove')) systemProperty 'sr.testAbove', 'true'
+    if (project.hasProperty('feedbackLeft')) systemProperty 'sr.testLeft', 'true'
+}
+tasks.register('validateFix7Map', JavaExec) {
+    dependsOn validationClasses
+    classpath = sourceSets.validation.runtimeClasspath
+    mainClass = 'com.sora.splineroads.core.FeedbackFix7Map'
+    jvmArgs '-Xmx2G', '-XX:ActiveProcessorCount=4'
+}
 tasks.register('measureFix6', JavaExec) {
     dependsOn validationClasses
     classpath = sourceSets.validation.runtimeClasspath
@@ -121,13 +143,20 @@ minecraft {
         configureEach {
             workingDirectory project.file(project.findProperty('roadRunDir') ?: 'run')
             property 'forge.logging.console.level', 'info'
-            if (project.hasProperty('roadMtr') || project.hasProperty('roadEmbeddiumDir') || project.hasProperty('roadOculusDir')) {
+            if (project.hasProperty('roadMtr') || project.hasProperty('roadEmbeddiumDir') || project.hasProperty('roadOculusDir') || project.hasProperty('roadXaeroDir')) {
                 property 'mixin.env.remapRefMap', 'true'
                 property 'mixin.env.refMapRemappingFile', project.layout.buildDirectory.file('createSrgToMcp/output.srg').get().asFile.absolutePath
             }
             mods { splineroads { source sourceSets.main } }
         }
         client {
+            if (project.hasProperty('feedbackFix7Client')) {
+                mods { splineroads { source sourceSets.gameTest } }
+                property 'road.feedbackFix7Client', 'true'
+                if (project.hasProperty('feedbackFix7MapsOnly')) property 'road.feedbackFix7MapsOnly', 'true'
+                property 'road.xaeroMetrics', 'true'
+                jvmArgs '-Xmx6G', '-XX:ActiveProcessorCount=4'
+            }
             if (project.hasProperty('feedbackFix6Client')) {
                 mods { splineroads { source sourceSets.gameTest } }
                 property 'road.feedbackFix6Client', 'true'
@@ -166,6 +195,11 @@ minecraft {
         }
         server {
             args '--nogui'
+            if (project.hasProperty('feedbackFix7Server')) {
+                mods { splineroads { source sourceSets.gameTest } }
+                property 'road.feedbackFix7Server', 'true'
+                jvmArgs '-Xmx3G', '-XX:ActiveProcessorCount=4'
+            }
             if (project.hasProperty('feedbackFix6')) {
                 mods { splineroads { source sourceSets.gameTest } }
                 property 'road.feedbackFix6', 'true'
@@ -214,6 +248,7 @@ minecraft {
 }
 
 repositories {
+    if (project.hasProperty('roadXaeroDir')) flatDir { dirs project.property('roadXaeroDir') }
     if (project.hasProperty('roadMtrRepository')) maven {
         url = uri(project.property('roadMtrRepository'))
         content { includeModule 'maven.modrinth', 'minecraft-transit-railway' }
@@ -225,6 +260,10 @@ repositories {
     if (project.hasProperty('roadOculusDir')) flatDir { dirs project.property('roadOculusDir') }
 }
 dependencies {
+    if (project.hasProperty('roadXaeroDir')) {
+        runtimeOnly fg.deobf('local.xaero:xaeroworldmap:1.47.0')
+        runtimeOnly fg.deobf('local.xaero:xaerominimap:26.6.0')
+    }
     minecraft 'net.minecraftforge:forge:1.20.1-47.4.20'
     // Optional MTR 4.0.5 adapter; never bundle the mod or link it on the absent path.
     if (project.hasProperty('roadMtrJar')) compileOnly files(project.property('roadMtrJar'))

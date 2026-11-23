@@ -509,6 +509,8 @@ public final class RoadIndex {
   }
 
   public java.util.function.Consumer<UUID> changed = id -> {};
+  /** Post-publication observer; null id denotes a complete world/index reset. */
+  public java.util.function.BiConsumer<UUID,Built> published = (id,road) -> {};
   public synchronized void put(Built built) {
     internalNodes.clear();
     changed.accept(built.record.id());
@@ -523,7 +525,7 @@ public final class RoadIndex {
         c -> chunkRoads.computeIfAbsent(c, k -> new HashSet<>()).add(built.record.id()));
     for (var p : List.of(built.record.a(), built.record.b()))
       nodeRoads.computeIfAbsent(p.asLong(), k -> new HashSet<>()).add(built.record.id());
-
+    published.accept(built.record.id(),built);
   }
 
   /** Preserve the spatial index, shape cache and render revision for point-only changes. */
@@ -532,7 +534,7 @@ public final class RoadIndex {
     if (previous == null) throw new IllegalArgumentException("道路已不存在");
     var next = previous.lanePoints(value);
     roads.put(id, next);if(!lazy)planningSnapshot=planningSnapshot.with(next);contentRevision++;
-    if(pointIndex!=null)pointIndex.put(next.record);changed.accept(id);
+    if(pointIndex!=null)pointIndex.put(next.record);changed.accept(id);published.accept(id,next);
     return next;
   }
 
@@ -543,6 +545,7 @@ public final class RoadIndex {
     if(old!=null&&!lazy)planningSnapshot=planningSnapshot.without(id);
     if(old!=null)changed.accept(id);
     if (old == null) return null;
+    published.accept(id,null);
     revision++;contentRevision++;
     invalidate(old.chunks);
     signalLocations(old).forEach(c -> removeFrom(signalChunks, c, id));
@@ -655,6 +658,7 @@ public final class RoadIndex {
     internalNodes.clear();
     revision++;contentRevision++;
     roads.clear();
+    published.accept(null,null);
     if(pointIndex!=null)pointIndex.clear();
     planningSnapshot=RoadPlanningSnapshot.empty();
     chunkRoads.clear();

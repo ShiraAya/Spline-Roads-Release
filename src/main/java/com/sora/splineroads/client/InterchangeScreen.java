@@ -661,6 +661,7 @@ public final class InterchangeScreen extends Screen {
   @Override
   public void tick() {
     super.tick();
+    if(computing){String progress=WORKER.progress();if(!progress.isEmpty())status=progress;}
     if (delay > 0) delay--;
     if (delay == 0 && needsPlan && !computing) calculate();
   }

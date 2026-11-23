@@ -10,6 +10,8 @@ public final class LatestPlanningTask<T> {
   private static final class Request {
     final AtomicBoolean cancelled = new AtomicBoolean();
     FutureTask<Void> task;
+    volatile String progress="正在校验布局";
+    final long started=System.nanoTime();
   }
   private final ThreadPoolExecutor executor;
   private final String phase;
@@ -48,7 +50,7 @@ public final class LatestPlanningTask<T> {
     request.task = new FutureTask<>(() -> {
       T result = null;
       Throwable failure = null;
-      try (var scope = RoadPlanningBudget.open(phase, seconds, request.cancelled::get)) {
+      try (var scope = RoadPlanningBudget.open(phase, seconds, request.cancelled::get).progress(value->request.progress=value)) {
         RoadPlanningBudget.check();
         result = computation.call();
         RoadPlanningBudget.check();
@@ -75,4 +77,5 @@ public final class LatestPlanningTask<T> {
   }
 
   public int queued() { return executor.getQueue().size(); }
+  public synchronized String progress(){var request=current;return request==null?"":request.progress+" · "+(System.nanoTime()-request.started)/1_000_000_000L+" 秒";}
 }

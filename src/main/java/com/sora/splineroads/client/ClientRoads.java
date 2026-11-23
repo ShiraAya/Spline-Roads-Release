@@ -25,7 +25,7 @@ public final class ClientRoads {
     if(mc.hitResult instanceof net.minecraft.world.phys.BlockHitResult hit){var pos=RoadTool.endpointAtHit(mc.level,hit.getBlockPos(),hit.getLocation());var t=new CompoundTag();t.putString("Action","curveControl");t.putLong("Pos",pos.asLong());beginWorldEdit();sendAction(t);}
   }
   public static final RoadIndex INDEX = new RoadIndex(true);
-  static {INDEX.changed=id->{ClientToolIndex.changed(id);SmartSignClient.candidatesChanged(id);SidewalkBlockModels.changed(INDEX,id);};}
+  static {INDEX.changed=id->{ClientToolIndex.changed(id);SmartSignClient.candidatesChanged(id);SidewalkBlockModels.changed(INDEX,id);};INDEX.published=XaeroRoadMap::changed;}
   public static CompoundTag draft;
   private static final com.sora.splineroads.core.RoadEditRequests editRequests = new com.sora.splineroads.core.RoadEditRequests();
   private static final Object WORLD_EDITOR = new Object();
@@ -173,6 +173,7 @@ public final class ClientRoads {
       e.enqueueWork(
           () -> {
             RoadBlocks.clientIndex = l -> INDEX;
+            XaeroRoadMap.setup();
             RoadTool.openClient = ClientRoads::open;RoadSplitTool.activateClient=RoadSplitterClient::activate;
           });
     }

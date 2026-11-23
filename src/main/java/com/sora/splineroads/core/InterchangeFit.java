@@ -89,6 +89,7 @@ public final class InterchangeFit {
     for (int tries = 0; tries < 20 && target < limit; tries++) {
       RoadPlanningBudget.check();
       target = Math.min(limit, Math.ceil(Math.max(target + 16, target * 1.18) / 4) * 4);
+      RoadPlanningBudget.phase("调整端点：检查距交点 "+Math.round(target)+" 格的布局");
       try {
         best =
             refinement.keep(InterchangePlanner.plan(

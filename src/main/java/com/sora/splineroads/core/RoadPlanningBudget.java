@@ -8,17 +8,19 @@ public final class RoadPlanningBudget implements AutoCloseable {
   private static final ThreadLocal<RoadPlanningBudget> CURRENT=new ThreadLocal<>();
   private final RoadPlanningBudget previous;private final long deadline;private final BooleanSupplier cancelled;
   private String phase;private boolean disabled;
+  private java.util.function.Consumer<String> progress;
   private RoadPlanningBudget(String phase,double seconds,BooleanSupplier cancelled){
     previous=CURRENT.get();this.phase=phase;this.cancelled=cancelled;
     long own=Double.isInfinite(seconds)?Long.MAX_VALUE:System.nanoTime()+(long)(seconds*1e9);deadline=previous==null?own:Math.min(own,previous.deadline);CURRENT.set(this);
   }
   public static RoadPlanningBudget open(String phase,double seconds){return open(phase,seconds,()->false);}
   public static RoadPlanningBudget open(String phase,double seconds,BooleanSupplier cancelled){return new RoadPlanningBudget(phase,seconds,cancelled);}
+  public RoadPlanningBudget progress(java.util.function.Consumer<String> listener){progress=listener;return this;}
   /** Interactive planning finishes its finite candidate search; elapsed time is
    * not evidence that geometry is impossible. Keep user cancellation checkpoints. */
   public static RoadPlanningBudget cancellable(String phase){return cancellable(phase,()->false);}
   public static RoadPlanningBudget cancellable(String phase,BooleanSupplier cancelled){return open(phase,Double.POSITIVE_INFINITY,cancelled);}
-  public static void phase(String name){var b=CURRENT.get();if(b!=null)b.phase=name;check();}
+  public static void phase(String name){var b=CURRENT.get();if(b!=null)b.phase=name;for(var scope=b;scope!=null;scope=scope.previous)if(scope.progress!=null)scope.progress.accept(name);check();}
   public static void check(){
     var b=CURRENT.get();if(b==null||b.disabled)return;
     if(Thread.currentThread().isInterrupted())throw new Aborted("匝道计算已取消，未写入道路");
